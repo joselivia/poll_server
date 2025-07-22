@@ -4,6 +4,7 @@ import pollRoutes from "./routes/polls";
 import postRoutes from "./routes/posts";
 import pool from "./config-db";
 import dotenv from "dotenv";
+import opinion from "./routes/opinion_poll";
 dotenv.config();
 
 const app = express();
@@ -13,7 +14,7 @@ app.use(express.json());
 
 app.use("/api/polls", pollRoutes);
 app.use("/api", postRoutes); 
-
+app.use("/api/opinion_poll", opinion);
 pool.query("SELECT NOW()", (err, res) => {
   if (err) {
     console.error("❌ Database connection failed:", err);

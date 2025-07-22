@@ -7,12 +7,13 @@ const upload = multer({ storage: multer.memoryStorage() });
 router.post("/", upload.any(), async (req, res) => {
   const {
     title,
+    presidential,
     category,
     region,
     county,
     constituency,
+    ward,
     party,
-    is_custom = false,
   } = req.body;
 
   let competitors: { name: string; party: string }[] = [];
@@ -25,10 +26,10 @@ router.post("/", upload.any(), async (req, res) => {
   try {
     
     const result = await pool.query(
-      `INSERT INTO polls (title, profile, category, region, county, constituency, party, is_custom)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+      `INSERT INTO polls (title,presidential, profile, category, region, county, constituency,ward, party)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8,$9)
        RETURNING id`,
-      [title, null, category, region, county, constituency, party, is_custom]
+      [title,presidential, null, category, region, county, constituency,ward, party]
     );
 
     const pollId = result.rows[0].id;
@@ -85,7 +86,7 @@ router.post("/votes", async (req, res) => {
   }
 });
 
-router.get("/:id/results", async (req, res) => {
+router.get("/:id", async (req, res) => {
   const { id } = req.params;
   const parsedId = parseInt(id);
 
@@ -95,7 +96,7 @@ router.get("/:id/results", async (req, res) => {
 
   try {
     const pollQuery = await pool.query(
-      `SELECT id, title,profile, category, region, county, constituency, party, spoiled_votes
+      `SELECT id, title,presidential,profile, category, region, county, constituency,ward, party, spoiled_votes
        FROM polls
        WHERE id = $1`,
       [parsedId]
@@ -151,19 +152,26 @@ const base64Image = buffer
           [parsedId]
         )
       ).rows[0].last_updated || new Date();
-
+  const rawCompetitors = pollResult.rows.map((row: any) => ({
+    id: row.id,
+    name: row.name,
+    party: row.party,
+    profile: row.profile?`data:image/png;base64,${row.profile.toString("base64")}` : null,}));
 res.json({
   id: parsedId,
   title: pollQuery.rows[0]?.title,
+  presidential: pollQuery.rows[0]?.presidential,
   profile: pollQuery.rows[0]?.profile || [],
   region: pollQuery.rows[0]?.region,
   category: pollQuery.rows[0]?.category, 
   county: pollQuery.rows[0]?.county,
   constituency: pollQuery.rows[0]?.constituency,
+  ward: pollQuery.rows[0]?.ward,
   party: pollQuery.rows[0]?.party,
   spoiled_votes: pollQuery.rows[0]?.spoiled_votes || 0,
   totalVotes: parseInt(totalVotes.rows[0].total) || 0,
   results,
+  competitors: rawCompetitors,
   lastUpdated,
 });
 
@@ -180,23 +188,47 @@ router.get("/", async (req, res) => {
     let result;
     if (category) {
       result = await pool.query(
-        `SELECT p.id, p.title, MAX(v.voted_at) as last_updated
-         FROM polls p
-         LEFT JOIN competitors c ON p.id = c.poll_id
-         LEFT JOIN votes v ON c.id = v.competitor_id
-         WHERE p.category = $1
-         GROUP BY p.id, p.title
-         ORDER BY last_updated DESC NULLS LAST`,
+        `SELECT 
+          p.id,
+          p.title,
+          p.presidential,
+          p.category,
+          p.region,
+          p.county,
+          p.constituency,
+          p.ward,
+          p.party,
+          MAX(v.voted_at) as last_updated
+        FROM polls p
+        LEFT JOIN competitors c ON p.id = c.poll_id
+        LEFT JOIN votes v ON c.id = v.competitor_id
+        WHERE p.category = $1
+        GROUP BY 
+          p.id, p.title, p.presidential, p.category,
+          p.region, p.county, p.constituency, p.ward, p.party
+        ORDER BY last_updated DESC NULLS LAST`,
         [category]
       );
     } else {
       result = await pool.query(
-        `SELECT p.id, p.title, MAX(v.voted_at) as last_updated
-         FROM polls p
-         LEFT JOIN competitors c ON p.id = c.poll_id
-         LEFT JOIN votes v ON c.id = v.competitor_id
-         GROUP BY p.id, p.title
-         ORDER BY last_updated DESC NULLS LAST`
+        `SELECT 
+          p.id,
+          p.title,
+          p.presidential,
+          p.category,
+          p.region,
+          p.county,
+          p.constituency,
+          p.ward,
+          p.party,
+          MAX(v.voted_at) as last_updated
+        FROM polls p
+        LEFT JOIN competitors c ON p.id = c.poll_id
+        LEFT JOIN votes v ON c.id = v.competitor_id
+        GROUP BY 
+          p.id, p.title, p.presidential, p.category,
+          p.region, p.county, p.constituency, p.ward, p.party
+        ORDER BY last_updated DESC NULLS LAST`
       );
     }
 
@@ -204,6 +236,13 @@ router.get("/", async (req, res) => {
       result.rows.map((row) => ({
         id: row.id,
         title: row.title,
+        presidential: row.presidential,
+        category: row.category,
+        region: row.region,
+        county: row.county,
+        constituency: row.constituency,
+        ward: row.ward,
+        party: row.party,
         lastUpdated: row.last_updated,
       }))
     );
@@ -213,70 +252,5 @@ router.get("/", async (req, res) => {
   }
 });
 
-
-//Custom Polls
-router.post("/custom_poll", async (req, res) => {
-  const { title, competitors } = req.body;
-
-  if (!title || !Array.isArray(competitors) || competitors.length === 0) {
-    res
-      .status(400)
-      .json({ error: "Title and at least one competitor are required" });
-  }
-
-  try {
-    const pollResult = await pool.query(
-      `INSERT INTO custom_polls (title) VALUES ($1) RETURNING id`,
-      [title]
-    );
-
-    const pollId = pollResult.rows[0].id;
-
-    const competitorInserts = competitors.map((name: any) =>
-      pool.query(
-        "INSERT INTO custom_poll_competitors (name, poll_id) VALUES ($1, $2)",
-        [name, pollId]
-      )
-    );
-
-    await Promise.all(competitorInserts);
-
-    res
-      .status(201)
-      .json({ id: pollId, message: "✅ Custom poll created successfully" });
-  } catch (error) {
-    console.error("❌ Error creating custom poll:", error);
-    res.status(500).json({ error: "Failed to create custom poll" });
-  }
-});
-router.post("/vote", async (req, res) => {
-  const { competitorId } = req.body;
-
-  const parsedId = parseInt(competitorId);
-  if (!parsedId || isNaN(parsedId)) {
-    res.status(400).json({ error: "Invalid competitor ID" });
-  }
-
-  try {
-    const check = await pool.query(
-      "SELECT id FROM custom_poll_competitors WHERE id = $1",
-      [parsedId]
-    );
-
-    if (check.rowCount === 0) {
-      res.status(404).json({ error: "Competitor not found" });
-    }
-
-    await pool.query(
-      "INSERT INTO custom_poll_votes (competitor_id) VALUES ($1)",
-      [parsedId]
-    );
-
-    res.status(200).json({ message: "✅ Vote recorded successfully" });
-  } catch (error) {
-    console.error("❌ Error recording vote:", error);
-    res.status(500).json({ error: "Failed to record vote" });
-  }
-});
 
 export default router;
