@@ -1,6 +1,5 @@
 import express from 'express';
 import pool from '../config-db'; 
-
 const router = express.Router();
 
 router.post('/', async (req, res) => {
