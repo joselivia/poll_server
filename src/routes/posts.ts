@@ -4,7 +4,6 @@ import pool from '../config-db';
 
 const router = express.Router();
 const storage = multer.memoryStorage();
-
 const fileFilter = (_req: any, file: Express.Multer.File, cb: any) => {
   const allowedTypes = /jpeg|jpg|png|gif|mp4|webm|avi|mov/;
   const isValid = allowedTypes.test(file.mimetype);

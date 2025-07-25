@@ -2,17 +2,17 @@ import { Pool } from "pg";
 import dotenv from "dotenv";
 
 dotenv.config();
-export const pool = new Pool({
-  connectionString: process.env.DATABASE_URL,
-  ssl: { rejectUnauthorized: false },
-});
 // export const pool = new Pool({
-//   user: "postgres",
-//   password: "@Joselivia254",
-//   host: "localhost",
-//   port: 5432,
-//   database: "polling",
+//   connectionString: process.env.DATABASE_URL,
+//   ssl: { rejectUnauthorized: false },
 // });
+export const pool = new Pool({
+  user: "postgres",
+  password: "@Joselivia254",
+  host: "localhost",
+  port: 5432,
+  database: "polling",
+});
 
 const createTables = async () => {
   const queries = [
@@ -72,6 +72,11 @@ const createTables = async () => {
     voted_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 `,
+`CREATE TABLE IF NOT EXISTS login(
+id SERIAL PRIMARY KEY,
+email TEXT NOT NULL,
+password TEXT NOT NULL
+)`,
   ];
 
   try {
@@ -83,6 +88,5 @@ const createTables = async () => {
     console.error("❌ Error creating tables:", error);
   }
 };
-
 createTables();
 export default pool;
