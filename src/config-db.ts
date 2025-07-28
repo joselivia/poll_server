@@ -1,5 +1,6 @@
 import { Pool } from "pg";
 import dotenv from "dotenv";
+import { insertAdmin } from "./routes/admin";
 
 dotenv.config();
 export const pool = new Pool({
@@ -84,6 +85,8 @@ password TEXT NOT NULL
       await pool.query(query);
     }
     console.log("✅ All tables are created successfully!");
+
+    await insertAdmin();
   } catch (error: Error | any) {
     console.error("❌ Error creating tables:", error);
   }
