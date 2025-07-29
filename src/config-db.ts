@@ -3,17 +3,17 @@ import dotenv from "dotenv";
 import { insertAdmin } from "./routes/admin";
 
 dotenv.config();
-export const pool = new Pool({
-  connectionString: process.env.DATABASE_URL,
-  ssl: { rejectUnauthorized: false },
-});
 // export const pool = new Pool({
-//   user: "postgres",
-//   password: "@Joselivia254",
-//   host: "localhost",
-//   port: 5432,
-//   database: "polling",
+//   connectionString: process.env.DATABASE_URL,
+//   ssl: { rejectUnauthorized: false },
 // });
+export const pool = new Pool({
+  user: "postgres",
+  password: "@Joselivia254",
+  host: "localhost",
+  port: 5432,
+  database: "polling",
+});
 
 const createTables = async () => {
   const queries = [
@@ -24,8 +24,10 @@ const createTables = async () => {
   presidential TEXT,
   region TEXT NOT NULL,
   county TEXT NOT NULL,
-  constituency TEXT NOT NULL,
-  ward TEXT NOT NULL,
+  constituency TEXT ,
+  ward TEXT ,
+  total_votes INTEGER DEFAULT 0,
+  spoiled_votes INTEGER DEFAULT 0,
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );`,
     `CREATE TABLE IF NOT EXISTS poll_competitors (
@@ -35,7 +37,13 @@ const createTables = async () => {
       profile_image BYTEA,
       poll_id INT REFERENCES polls(id) ON DELETE CASCADE
     );`,
-
+  `CREATE TABLE IF NOT EXISTS votes (
+  id SERIAL PRIMARY KEY,
+  poll_id INTEGER NOT NULL REFERENCES polls(id) ON DELETE CASCADE,
+  competitor_id INTEGER NOT NULL REFERENCES poll_competitors(id) ON DELETE CASCADE,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+`,
     `CREATE TABLE IF NOT EXISTS poll_questions (
       id SERIAL PRIMARY KEY,
       poll_id INT REFERENCES polls(id) ON DELETE CASCADE,
@@ -62,9 +70,9 @@ const createTables = async () => {
     `CREATE TABLE IF NOT EXISTS poll_responses (
     id SERIAL PRIMARY KEY,
     poll_id INT NOT NULL REFERENCES polls(id) ON DELETE CASCADE,
-    respondent_name TEXT NOT NULL,
-    respondent_age INT NOT NULL,
-    respondent_gender TEXT NOT NULL,
+    respondent_name TEXT,
+    respondent_age INT,
+    respondent_gender TEXT,
     user_identifier TEXT NOT NULL, 
     question_id INT NOT NULL REFERENCES poll_questions(id) ON DELETE CASCADE,
     selected_competitor_id INT REFERENCES poll_competitors(id) ON DELETE CASCADE,

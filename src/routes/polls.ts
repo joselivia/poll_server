@@ -68,9 +68,9 @@ router.post("/", async (req, res) => {
     presidential,
     region,
     county,
-    constituency,
-    ward,
-  } = req.body;
+     } = req.body;
+const constituency = req.body.constituency || null;
+const ward = req.body.ward || null;
 
   if (!title || !category || !region) {
     return res.status(400).json({ message: "Missing required fields for poll creation." });
@@ -337,7 +337,6 @@ router.get("/:pollId/results", async (req, res) => {
   let client: PoolClient | null = null; 
   try {
     client = await pool.connect();
-
     const pollResult = await client.query(
       `SELECT
           p.id, p.title, p.category, p.presidential, p.region, p.county, p.constituency, p.ward, p.created_at,

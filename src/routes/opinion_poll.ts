@@ -8,11 +8,6 @@ router.post('/', async (req, res) => {
     if (!pollId || !respondent || !answers || !Array.isArray(answers)) {
         return res.status(400).json({ error: "Missing required fields: pollId, respondent, or answers array." });
     }
-
-    if (!respondent.name || !respondent.gender || !respondent.age) {
-        return res.status(400).json({ error: "Respondent details (name, gender, age) are required." });
-    }
-
     const parsedPollId = parseInt(pollId);
     if (isNaN(parsedPollId)) {
         return res.status(400).json({ error: "Invalid pollId provided." });

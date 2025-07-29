@@ -4,6 +4,7 @@ import pollRoutes from "./routes/polls";
 import postRoutes from "./routes/posts";
 import login from "./routes/login";
 import pool from "./config-db";
+import aspirant from "./routes/aspirants";
 import dotenv from "dotenv";
 
 dotenv.config();
@@ -15,6 +16,7 @@ app.use(express.json());
 app.use("/api/polls", pollRoutes);
 app.use("/api", postRoutes); 
 app.use("/login",login);
+app.use("/aspirant",aspirant)
 
 
 pool.query("SELECT NOW()", (err, res) => {
