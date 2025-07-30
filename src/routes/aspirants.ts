@@ -6,18 +6,23 @@ const router = express.Router();
 router.get("/", async (req, res) => {
   try {
     const result = await pool.query(`
-      SELECT id, title, created_at
-      FROM polls
-      ORDER BY created_at DESC
-      LIMIT 1
+      SELECT p.id, p.title,p.region, p.county, p.constituency, p.ward, p.created_at
+      FROM polls p
+      WHERE EXISTS (
+        SELECT 1 FROM poll_competitors pc WHERE pc.poll_id = p.id
+      ) AND NOT EXISTS (
+        SELECT 1 FROM poll_questions pq WHERE pq.poll_id = p.id
+      )
+      ORDER BY p.created_at DESC
     `);
 
-    return res.status(200).json(result.rows); 
+    return res.status(200).json(result.rows);
   } catch (err) {
-    console.error("Error fetching latest poll:", err);
+    console.error("Error fetching aspirant-only polls:", err);
     return res.status(500).json({ message: "Server error." });
   }
 });
+
 
 router.get("/:id", async (req, res) => {
   const pollId = parseInt(req.params.id);

@@ -156,13 +156,21 @@ router.post("/createQuiz", upload.any(), async (req, res) => {
 
 router.get("/", async (req, res) => {
   try {
-    const result = await pool.query("SELECT * FROM polls ORDER BY created_at DESC");
+    const result = await pool.query(`
+      SELECT p.*
+      FROM polls p
+      WHERE EXISTS (
+        SELECT 1 FROM poll_questions q WHERE q.poll_id = p.id
+      )
+      ORDER BY p.created_at DESC
+    `);
     res.status(200).json(result.rows);
   } catch (error) {
     console.error("Error fetching polls:", error);
     res.status(500).json({ message: "Server error." });
   }
 });
+
 
 
 router.get("/:id", async (req, res) => {
