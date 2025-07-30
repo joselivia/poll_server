@@ -27,7 +27,7 @@ router.get("/:id", async (req, res) => {
 
   try {
     const pollQuery = `
-      SELECT id, title, category, region, county, constituency, ward, total_votes, spoiled_votes, created_at 
+      SELECT id, title,presidential, category, region, county, constituency, ward, total_votes, spoiled_votes, created_at 
       FROM polls
       WHERE id = $1
     `;
@@ -106,6 +106,7 @@ router.get("/:id", async (req, res) => {
     const response = {
       id: poll.id,
       title: poll.title,
+      presidential:poll.presidential,
       category: poll.category,
       region: poll.region,
       county: poll.county,

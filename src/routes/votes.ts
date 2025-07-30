@@ -4,9 +4,9 @@ import { pool } from "../config-db";
 const router = express.Router();
 
 router.post("/", async (req, res) => {
-  const { pollId, competitorId } = req.body;
+  const { id, competitorId } = req.body;
 
-  if (!pollId || !competitorId) {
+  if (!id || !competitorId) {
     return res.status(400).json({ message: "pollId and competitorId are required." });
   }
 
@@ -17,7 +17,7 @@ router.post("/", async (req, res) => {
 
     const check = await client.query(
       `SELECT id FROM poll_competitors WHERE id = $1 AND poll_id = $2`,
-      [competitorId, pollId]
+      [competitorId, id]
     );
 
     if (check.rowCount === 0) {
@@ -27,13 +27,13 @@ router.post("/", async (req, res) => {
 
     await client.query(
       `INSERT INTO votes (poll_id, competitor_id) VALUES ($1, $2)`,
-      [pollId, competitorId]
+      [id, competitorId]
     );
 
     // Update total_votes in polls table
     await client.query(
       `UPDATE polls SET total_votes = total_votes + 1 WHERE id = $1`,
-      [pollId]
+      [id]
     );
 
     await client.query("COMMIT");
