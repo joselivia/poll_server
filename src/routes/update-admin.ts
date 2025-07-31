@@ -1,9 +1,7 @@
 import express from "express";
 import bcrypt from "bcrypt";
 import { pool } from "../config-db";
-
 const router = express.Router();
-
 router.put("/", async (req, res) => {
   const { currentEmail, currentPassword, newEmail, newPassword } = req.body;
 
