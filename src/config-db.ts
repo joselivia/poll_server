@@ -3,17 +3,17 @@ import dotenv from "dotenv";
 import { insertAdmin } from "./routes/admin";
 
 dotenv.config();
-export const pool = new Pool({
-  connectionString: process.env.DATABASE_URL,
-  ssl: { rejectUnauthorized: false },
-});
 // export const pool = new Pool({
-//   user: "postgres",
-//   password: "@Joselivia254",
-//   host: "localhost",
-//   port: 5432,
-//   database: "polling",
+//   connectionString: process.env.DATABASE_URL,
+//   ssl: { rejectUnauthorized: false },
 // });
+export const pool = new Pool({
+  user: "postgres",
+  password: "@Joselivia254",
+  host: "localhost",
+  port: 5432,
+  database: "polling",
+});
 
 const createTables = async () => {
   const queries = [
@@ -28,6 +28,7 @@ const createTables = async () => {
   ward TEXT ,
   total_votes INTEGER DEFAULT 0,
   spoiled_votes INTEGER DEFAULT 0,
+  voting_expires_at TIMESTAMP,
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );`,
     `CREATE TABLE IF NOT EXISTS poll_competitors (
@@ -39,6 +40,7 @@ const createTables = async () => {
     );`,
   `CREATE TABLE IF NOT EXISTS votes (
   id SERIAL PRIMARY KEY,
+  voter_id TEXT,
   poll_id INTEGER NOT NULL REFERENCES polls(id) ON DELETE CASCADE,
   competitor_id INTEGER NOT NULL REFERENCES poll_competitors(id) ON DELETE CASCADE,
   created_at TIMESTAMPTZ DEFAULT NOW()

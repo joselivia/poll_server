@@ -6,12 +6,26 @@ const router = express.Router();
 router.get("/", async (req, res) => {
   try {
     const result = await pool.query(`
-      SELECT p.id, p.title,p.region, p.county, p.constituency, p.ward, p.created_at
+      SELECT 
+        p.id, 
+        p.title,
+        p.region, 
+        p.county, 
+        p.constituency, 
+        p.ward, 
+        p.created_at,
+      p.voting_expires_at,
+        TRUE AS is_competitor_only
       FROM polls p
       WHERE EXISTS (
-        SELECT 1 FROM poll_competitors pc WHERE pc.poll_id = p.id
-      ) AND NOT EXISTS (
-        SELECT 1 FROM poll_questions pq WHERE pq.poll_id = p.id
+        SELECT 1 
+        FROM poll_competitors pc 
+        WHERE pc.poll_id = p.id
+      )
+      AND NOT EXISTS (
+        SELECT 1 
+        FROM poll_questions pq 
+        WHERE pq.poll_id = p.id AND pq.is_competitor_question = false
       )
       ORDER BY p.created_at DESC
     `);
@@ -32,7 +46,7 @@ router.get("/:id", async (req, res) => {
 
   try {
     const pollQuery = `
-      SELECT id, title,presidential, category, region, county, constituency, ward, total_votes, spoiled_votes, created_at 
+      SELECT id, title,presidential, category, region, county, constituency, ward, total_votes, spoiled_votes,voting_expires_at, created_at 
       FROM polls
       WHERE id = $1
     `;
@@ -119,6 +133,7 @@ router.get("/:id", async (req, res) => {
       ward: poll.ward,
       totalVotes: poll.total_votes || 0,
       spoiled_votes: poll.spoiled_votes || 0,
+      voting_expires_at: poll.voting_expires_at,
       created_at: poll.created_at,
       results: votesresults
     };

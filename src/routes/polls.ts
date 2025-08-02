@@ -36,6 +36,7 @@ interface PollData {
   constituency: string;
   ward: string;
   createdAt: string;
+  voting_expires_at: string | null;
   competitors: Competitor[];
   questions: Question[];
 }
@@ -68,19 +69,29 @@ router.post("/", async (req, res) => {
     presidential,
     region,
     county,
-     } = req.body;
-const constituency = req.body.constituency || null;
-const ward = req.body.ward || null;
+    constituency,
+    ward,
+    voting_expires_at
+  } = req.body;
 
   if (!title || !category || !region) {
     return res.status(400).json({ message: "Missing required fields for poll creation." });
   }
 
+  let expiry = null;
+  if (voting_expires_at) {
+    expiry = new Date(voting_expires_at);
+    if (isNaN(expiry.getTime())) {
+      return res.status(400).json({ message: "Invalid voting_expires_at format." });
+    }
+  }
+
   try {
     const result = await pool.query(
-      `INSERT INTO polls (title, category, presidential, region, county, constituency, ward)
-       VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id`,
-      [title, category, presidential, region, county, constituency, ward]
+      `INSERT INTO polls (title, category, presidential, region, county, constituency, ward, voting_expires_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+       RETURNING id`,
+      [title, category, presidential, region, county, constituency || null, ward || null, expiry]
     );
     res.status(201).json({ id: result.rows[0].id });
   } catch (error) {
@@ -88,6 +99,7 @@ const ward = req.body.ward || null;
     res.status(500).json({ message: "Server error during poll creation." });
   }
 });
+
 
 
 router.post("/createQuiz", upload.any(), async (req, res) => {
@@ -160,16 +172,19 @@ router.get("/", async (req, res) => {
       SELECT p.*
       FROM polls p
       WHERE EXISTS (
-        SELECT 1 FROM poll_questions q WHERE q.poll_id = p.id
+        SELECT 1 FROM poll_questions q 
+        WHERE q.poll_id = p.id AND q.is_competitor_question = false
       )
       ORDER BY p.created_at DESC
     `);
+
     res.status(200).json(result.rows);
   } catch (error) {
     console.error("Error fetching polls:", error);
     res.status(500).json({ message: "Server error." });
   }
 });
+
 
 
 
@@ -390,6 +405,7 @@ router.get("/:pollId/results", async (req, res) => {
       constituency: pollData.constituency,
       ward: pollData.ward,
       createdAt: pollData.created_at,
+      voting_expires_at:pollData.voting_expires_at,
       competitors: formattedCompetitors,
       questions: formattedQuestions,
     };
