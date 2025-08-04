@@ -29,6 +29,7 @@ const createTables = async () => {
   total_votes INTEGER DEFAULT 0,
   spoiled_votes INTEGER DEFAULT 0,
   voting_expires_at TIMESTAMP,
+  allow_multiple_votes BOOLEAN DEFAULT false,
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );`,
     `CREATE TABLE IF NOT EXISTS poll_competitors (
@@ -67,6 +68,7 @@ const createTables = async () => {
   content TEXT NOT NULL,
   image_data BYTEA[],
   video_data BYTEA[],
+  pdf_data bytea[],
   created_at TIMESTAMP DEFAULT NOW()
 );`,
     `CREATE TABLE IF NOT EXISTS poll_responses (
