@@ -15,11 +15,11 @@ const port = process.env.PORT || 8082;
 app.use(cors());
 app.use(express.json());
 app.use("/api/polls", pollRoutes);
-app.use("/api", postRoutes);
-app.use("/login", login);
-app.use("/aspirant", aspirant);
+app.use("/api/blogs", postRoutes);
+app.use("/api/login", login);
+app.use("/api/aspirant", aspirant);
 app.use("/api/votes", votes);
-app.use("/update-admin", updateAdmin);
+app.use("/api/update-admin", updateAdmin);
 
 pool.query("SELECT NOW()", (err, res) => {
   if (err) {

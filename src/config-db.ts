@@ -6,8 +6,6 @@ dotenv.config();
 export const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
 });
-
-
 const createTables = async () => {
   const queries = [
     `CREATE TABLE IF NOT EXISTS polls (
