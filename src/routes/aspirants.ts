@@ -1,6 +1,7 @@
 import express from "express";
 import { pool } from "../config-db";
-
+import multer from "multer";
+const upload = multer({ storage: multer.memoryStorage() });
 const router = express.Router();
 
 router.get("/", async (req, res) => {
@@ -9,12 +10,14 @@ router.get("/", async (req, res) => {
       SELECT 
         p.id, 
         p.title,
+        p.presidential,
+        p.category,
         p.region, 
         p.county, 
         p.constituency, 
         p.ward, 
         p.created_at,
-      p.voting_expires_at,
+        p.voting_expires_at,
         TRUE AS is_competitor_only
       FROM polls p
       WHERE EXISTS (
@@ -37,7 +40,6 @@ router.get("/", async (req, res) => {
   }
 });
 
-
 router.get("/:id", async (req, res) => {
   const pollId = parseInt(req.params.id);
   if (isNaN(pollId)) {
@@ -46,7 +48,7 @@ router.get("/:id", async (req, res) => {
 
   try {
     const pollQuery = `
-      SELECT id, title,presidential, category, region, county, constituency, ward, total_votes, spoiled_votes,voting_expires_at, created_at 
+      SELECT id, title, presidential, category, region, county, constituency, ward, total_votes, spoiled_votes, voting_expires_at, created_at 
       FROM polls
       WHERE id = $1
     `;
@@ -95,7 +97,7 @@ router.get("/:id", async (req, res) => {
         ...poll,
         results: [],
         totalVotes: 0,
-        message: "No votes recorded for this poll."
+        message: "No votes recorded for this poll.",
       });
     }
 
@@ -125,7 +127,7 @@ router.get("/:id", async (req, res) => {
     const response = {
       id: poll.id,
       title: poll.title,
-      presidential:poll.presidential,
+      presidential: poll.presidential,
       category: poll.category,
       region: poll.region,
       county: poll.county,
@@ -135,12 +137,146 @@ router.get("/:id", async (req, res) => {
       spoiled_votes: poll.spoiled_votes || 0,
       voting_expires_at: poll.voting_expires_at,
       created_at: poll.created_at,
-      results: votesresults
+      competitors: competitors,
+      results: votesresults,
     };
 
     return res.status(200).json(response);
   } catch (err) {
     console.error("Error fetching aspirant poll:", err);
+    return res.status(500).json({ message: "Server error." });
+  }
+});
+
+// ✅ Update poll by ID including competitors
+router.put("/:id", upload.any(), async (req, res) => {
+  const pollId = req.params.id;
+  const { title, presidential, category, region, county, constituency, ward } = req.body;
+  try {
+    await pool.query("BEGIN");
+    const pollResult = await pool.query(
+      `UPDATE polls
+       SET title=$1, presidential=$2, category=$3, region=$4, county=$5,
+           constituency=$6, ward=$7
+       WHERE id=$8 RETURNING *`,
+      [title, presidential, category, region, county, constituency, ward, pollId]
+    );
+    if (pollResult.rows.length === 0) {
+      await pool.query("ROLLBACK");
+        return res.status(404).json({ message: "Poll not found." });
+    }
+    let competitors: any[] = [];
+    if (Array.isArray(req.body.competitors)) {
+      interface CompetitorInput {
+        id: string;
+        name: string;
+        party: string;
+        profile: string;
+      }
+
+      interface CompetitorParsed {
+        id: number | null;
+        name: string;
+        party: string;
+        file: Express.Multer.File | null;
+      }
+
+            competitors = (req.body.competitors as CompetitorInput[]).map(
+              (comp: CompetitorInput, idx: number): CompetitorParsed => {
+                const file: Express.Multer.File | null =
+                  (req.files as Express.Multer.File[])?.find(
+                    (f: Express.Multer.File) => f.fieldname === `competitors[${idx}][profile]`
+                  ) || null;
+
+                return {
+                  id: comp.id && comp.id !== "" ? parseInt(comp.id) : null,
+                  name: comp.name?.trim() || "",
+                  party: comp.party || "",
+                  file,
+                };
+              }
+            );
+    } else {
+      console.warn("⚠️ No competitors found in request body");
+    }
+    for (const comp of competitors) {
+      if (!comp.name) {
+        await pool.query("ROLLBACK");
+        return res.status(400).json({ message: "Competitor name is required." });
+      }
+
+      if (comp.id) {
+        if (comp.file) {
+          await pool.query(
+            `UPDATE poll_competitors
+             SET name=$1, party=$2, profile_image=$3
+             WHERE id=$4 AND poll_id=$5`,
+            [comp.name, comp.party || null, comp.file.buffer, comp.id, pollId]
+          );
+        } else {
+          await pool.query(
+            `UPDATE poll_competitors
+             SET name=$1, party=$2
+             WHERE id=$3 AND poll_id=$4`,
+            [comp.name, comp.party || null, comp.id, pollId]
+          );
+        }
+      } else {
+        await pool.query(
+          `INSERT INTO poll_competitors (poll_id, name, party, profile_image)
+           VALUES ($1, $2, $3, $4)`,
+          [pollId, comp.name, comp.party || null, comp.file ? comp.file.buffer : null]
+        );
+      }
+    }
+    const competitorsResult = await pool.query(
+      `SELECT id, name, party,
+              CASE
+                WHEN profile_image IS NOT NULL
+                  THEN 'data:image/png;base64,' || encode(profile_image, 'base64')
+                ELSE NULL
+              END as profile
+       FROM poll_competitors
+       WHERE poll_id=$1`,
+      [pollId]
+    );
+
+    await pool.query("COMMIT");
+
+    res.status(200).json({
+      message: "Poll updated successfully",
+      poll: { ...pollResult.rows[0], competitors: competitorsResult.rows },
+    });
+  } catch (err: any) {
+    await pool.query("ROLLBACK");
+    res.status(500).json({ message: "Server error", error: err.message });
+  }
+});
+
+// DELETE a poll
+router.delete("/:id", async (req, res) => {
+  const pollId = parseInt(req.params.id);
+  if (isNaN(pollId)) {
+    return res.status(400).json({ message: "Invalid poll ID." });
+  }
+
+  try {
+    const pollCheck = await pool.query("SELECT id FROM polls WHERE id = $1", [
+      pollId,
+    ]);
+    if (pollCheck.rows.length === 0) {
+      return res.status(404).json({ message: "Poll not found." });
+    }
+
+    await pool.query("DELETE FROM votes WHERE poll_id = $1", [pollId]);
+    await pool.query("DELETE FROM poll_competitors WHERE poll_id = $1", [
+      pollId,
+    ]);
+    await pool.query("DELETE FROM polls WHERE id = $1", [pollId]);
+
+    return res.status(200).json({ message: "Poll deleted successfully." });
+  } catch (err) {
+    console.error("Error deleting poll:", err);
     return res.status(500).json({ message: "Server error." });
   }
 });
