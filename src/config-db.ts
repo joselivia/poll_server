@@ -28,6 +28,7 @@ const createTables = async () => {
   spoiled_votes INTEGER DEFAULT 0,
   voting_expires_at TIMESTAMP,
   allow_multiple_votes BOOLEAN DEFAULT false,
+  published BOOLEAN DEFAULT false, 
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );`,
     `CREATE TABLE IF NOT EXISTS poll_competitors (

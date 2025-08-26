@@ -3,7 +3,6 @@ import { pool } from "../config-db";
 import multer from "multer";
 const upload = multer({ storage: multer.memoryStorage() });
 const router = express.Router();
-
 router.get("/", async (req, res) => {
   try {
     const result = await pool.query(`
@@ -18,6 +17,7 @@ router.get("/", async (req, res) => {
         p.ward, 
         p.created_at,
         p.voting_expires_at,
+        p.published,
         TRUE AS is_competitor_only
       FROM polls p
       WHERE EXISTS (
@@ -39,7 +39,17 @@ router.get("/", async (req, res) => {
     return res.status(500).json({ message: "Server error." });
   }
 });
-
+router.get("/published", async (req, res) => {
+  
+  try {
+    const result = await pool.query(
+      "SELECT id, title FROM polls WHERE published = true ORDER BY created_at DESC"
+    );
+    res.json(result.rows);
+  } catch (err) {
+    res.status(500).json({ message: "Failed to fetch published polls" });
+  }
+});
 router.get("/:id", async (req, res) => {
   const pollId = parseInt(req.params.id);
   if (isNaN(pollId)) {
@@ -48,7 +58,7 @@ router.get("/:id", async (req, res) => {
 
   try {
     const pollQuery = `
-      SELECT id, title, presidential, category, region, county, constituency, ward, total_votes, spoiled_votes, voting_expires_at, created_at 
+      SELECT id, title, presidential, category, region, county, constituency, ward, total_votes, spoiled_votes,published, voting_expires_at, created_at 
       FROM polls
       WHERE id = $1
     `;
@@ -137,6 +147,7 @@ router.get("/:id", async (req, res) => {
       spoiled_votes: poll.spoiled_votes || 0,
       voting_expires_at: poll.voting_expires_at,
       created_at: poll.created_at,
+      published: poll.published,
       competitors: competitors,
       results: votesresults,
     };
@@ -229,7 +240,20 @@ router.put("/:id", upload.any(), async (req, res) => {
         );
       }
     }
-    const competitorsResult = await pool.query(
+    // ✅ Update or insert competitor question
+if (Array.isArray(req.body.questions)) {
+  for (const q of req.body.questions) {
+    if (q.id) {
+      await pool.query(
+        `UPDATE poll_questions
+         SET question_text = $1, type = $2, is_competitor_question = $3
+         WHERE id = $4 AND poll_id = $5`,
+        [q.question_text, q.type, q.is_competitor_question || false, q.id, pollId]
+      );
+    }
+  }
+}
+   const competitorsResult = await pool.query(
       `SELECT id, name, party,
               CASE
                 WHEN profile_image IS NOT NULL
@@ -240,12 +264,18 @@ router.put("/:id", upload.any(), async (req, res) => {
        WHERE poll_id=$1`,
       [pollId]
     );
+const questionsResult = await pool.query(
+  `SELECT id, type, is_competitor_question, question_text
+   FROM poll_questions
+   WHERE poll_id = $1`,
+  [pollId]
+);
 
     await pool.query("COMMIT");
 
     res.status(200).json({
       message: "Poll updated successfully",
-      poll: { ...pollResult.rows[0], competitors: competitorsResult.rows },
+      poll: { ...pollResult.rows[0], competitors: competitorsResult.rows, questions: questionsResult.rows },
     });
   } catch (err: any) {
     await pool.query("ROLLBACK");
@@ -280,5 +310,29 @@ router.delete("/:id", async (req, res) => {
     return res.status(500).json({ message: "Server error." });
   }
 });
+
+
+router.put("/:id/publish", async (req, res) => {
+  const { id } = req.params;
+  const { published } = req.body; 
+
+  try {
+    const result = await pool.query(
+      "UPDATE polls SET published = $1 WHERE id = $2 RETURNING *",
+      [published, id]
+    );
+
+    if (result.rowCount === 0) {
+      return res.status(404).json({ message: "Poll not found" });
+    }
+
+    res.json(result.rows[0]);
+  } catch (error) {
+    console.error("Error updating publish status:", error);
+    res.status(500).json({ message: "Failed to update publish status" });
+  }
+});
+
+
 
 export default router;
