@@ -199,7 +199,7 @@ router.get("/:id", async (req, res) => {
     client = await pool.connect();
 
     const pollResult = await client.query(
-      `SELECT id, title, category, presidential, region, county, constituency, ward, created_at FROM polls WHERE id = $1`,
+      `SELECT id, title, category, presidential, region, county, constituency, ward,voting_expires_at, created_at FROM polls WHERE id = $1`,
       [pollId]
     );
     if (pollResult.rows.length === 0) {
@@ -247,6 +247,7 @@ router.get("/:id", async (req, res) => {
       county: pollResult.rows[0].county,
       constituency: pollResult.rows[0].constituency,
       ward: pollResult.rows[0].ward,
+      votingExpiresAt: pollResult.rows[0].voting_expires_at,
       createdAt: pollResult.rows[0].created_at,
       competitors: competitors.rows.map((row: { id: number; name: string; party: string; profile_base64: string | null; }) => ({
         id: row.id, 
@@ -473,8 +474,7 @@ router.get("/:pollId/results", async (req, res) => {
       aggregatedResponses.push(aggregatedQuestion);
     }
 
-    const totalRespondents = allResponses.length;
-
+    const totalRespondents = new Set(allResponses.map(r => r.respondent_id)).size;
     const genderCounts = new Map<string, number>();
     const ageCounts = new Map<string, number>(); 
 

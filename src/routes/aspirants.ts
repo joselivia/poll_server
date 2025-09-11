@@ -162,15 +162,15 @@ router.get("/:id", async (req, res) => {
 // ✅ Update poll by ID including competitors
 router.put("/:id", upload.any(), async (req, res) => {
   const pollId = req.params.id;
-  const { title, presidential, category, region, county, constituency, ward } = req.body;
+  const { title, presidential, category, region, county, constituency, ward, voting_expires_at } = req.body;
   try {
     await pool.query("BEGIN");
     const pollResult = await pool.query(
       `UPDATE polls
        SET title=$1, presidential=$2, category=$3, region=$4, county=$5,
-           constituency=$6, ward=$7
-       WHERE id=$8 RETURNING *`,
-      [title, presidential, category, region, county, constituency, ward, pollId]
+           constituency=$6, ward=$7, voting_expires_at=$8
+       WHERE id=$9 RETURNING *`,
+      [title, presidential, category, region, county, constituency, ward,voting_expires_at, pollId]
     );
     if (pollResult.rows.length === 0) {
       await pool.query("ROLLBACK");
