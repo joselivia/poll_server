@@ -6,13 +6,7 @@ dotenv.config();
 export const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
 });
-// export const pool = new Pool({
-//   user: "postgres",
-//   password: "@Joselivia254",
-//   host: "localhost",
-//   port: 5432,
-//   database: "polling",
-// });
+
 const createTables = async () => {
   const queries = [
     `CREATE TABLE IF NOT EXISTS polls (
@@ -38,7 +32,7 @@ const createTables = async () => {
       profile_image BYTEA,
       poll_id INT REFERENCES polls(id) ON DELETE CASCADE
     );`,
-  `CREATE TABLE IF NOT EXISTS votes (
+    `CREATE TABLE IF NOT EXISTS votes (
   id SERIAL PRIMARY KEY,
   voter_id TEXT,
   poll_id INTEGER NOT NULL REFERENCES polls(id) ON DELETE CASCADE,
@@ -60,8 +54,8 @@ const createTables = async () => {
       option_text TEXT NOT NULL
     );
 `,
- 
-  `CREATE TABLE IF NOT EXISTS blog_posts (
+
+    `CREATE TABLE IF NOT EXISTS blog_posts (
   id SERIAL PRIMARY KEY,
   title TEXT NOT NULL,
   content TEXT NOT NULL,
@@ -84,7 +78,7 @@ const createTables = async () => {
     voted_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 `,
-`CREATE TABLE IF NOT EXISTS login(
+    `CREATE TABLE IF NOT EXISTS login(
 id SERIAL PRIMARY KEY,
 email TEXT NOT NULL,
 password TEXT NOT NULL
