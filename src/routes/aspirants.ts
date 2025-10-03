@@ -40,10 +40,13 @@ router.get("/", async (req, res) => {
   }
 });
 router.get("/published", async (req, res) => {
-  
   try {
     const result = await pool.query(
-      "SELECT id, title FROM polls WHERE published = true ORDER BY created_at DESC"
+      `SELECT id, title, presidential, category, region, county, constituency, ward, 
+              total_votes, spoiled_votes, published, voting_expires_at, created_at 
+       FROM polls 
+       WHERE published = true 
+       ORDER BY created_at DESC`
     );
     res.json(result.rows);
   } catch (err) {
@@ -162,7 +165,16 @@ router.get("/:id", async (req, res) => {
 // ✅ Update poll by ID including competitors
 router.put("/:id", upload.any(), async (req, res) => {
   const pollId = req.params.id;
-  const { title, presidential, category, region, county, constituency, ward, voting_expires_at } = req.body;
+  const {
+    title,
+    presidential,
+    category,
+    region,
+    county,
+    constituency,
+    ward,
+    voting_expires_at,
+  } = req.body;
   try {
     await pool.query("BEGIN");
     const pollResult = await pool.query(
@@ -170,11 +182,21 @@ router.put("/:id", upload.any(), async (req, res) => {
        SET title=$1, presidential=$2, category=$3, region=$4, county=$5,
            constituency=$6, ward=$7, voting_expires_at=$8
        WHERE id=$9 RETURNING *`,
-      [title, presidential, category, region, county, constituency, ward,voting_expires_at, pollId]
+      [
+        title,
+        presidential,
+        category,
+        region,
+        county,
+        constituency,
+        ward,
+        voting_expires_at,
+        pollId,
+      ]
     );
     if (pollResult.rows.length === 0) {
       await pool.query("ROLLBACK");
-        return res.status(404).json({ message: "Poll not found." });
+      return res.status(404).json({ message: "Poll not found." });
     }
     let competitors: any[] = [];
     if (Array.isArray(req.body.competitors)) {
@@ -192,28 +214,31 @@ router.put("/:id", upload.any(), async (req, res) => {
         file: Express.Multer.File | null;
       }
 
-            competitors = (req.body.competitors as CompetitorInput[]).map(
-              (comp: CompetitorInput, idx: number): CompetitorParsed => {
-                const file: Express.Multer.File | null =
-                  (req.files as Express.Multer.File[])?.find(
-                    (f: Express.Multer.File) => f.fieldname === `competitors[${idx}][profile]`
-                  ) || null;
+      competitors = (req.body.competitors as CompetitorInput[]).map(
+        (comp: CompetitorInput, idx: number): CompetitorParsed => {
+          const file: Express.Multer.File | null =
+            (req.files as Express.Multer.File[])?.find(
+              (f: Express.Multer.File) =>
+                f.fieldname === `competitors[${idx}][profile]`
+            ) || null;
 
-                return {
-                  id: comp.id && comp.id !== "" ? parseInt(comp.id) : null,
-                  name: comp.name?.trim() || "",
-                  party: comp.party || "",
-                  file,
-                };
-              }
-            );
+          return {
+            id: comp.id && comp.id !== "" ? parseInt(comp.id) : null,
+            name: comp.name?.trim() || "",
+            party: comp.party || "",
+            file,
+          };
+        }
+      );
     } else {
       console.warn("⚠️ No competitors found in request body");
     }
     for (const comp of competitors) {
       if (!comp.name) {
         await pool.query("ROLLBACK");
-        return res.status(400).json({ message: "Competitor name is required." });
+        return res
+          .status(400)
+          .json({ message: "Competitor name is required." });
       }
 
       if (comp.id) {
@@ -236,24 +261,35 @@ router.put("/:id", upload.any(), async (req, res) => {
         await pool.query(
           `INSERT INTO poll_competitors (poll_id, name, party, profile_image)
            VALUES ($1, $2, $3, $4)`,
-          [pollId, comp.name, comp.party || null, comp.file ? comp.file.buffer : null]
+          [
+            pollId,
+            comp.name,
+            comp.party || null,
+            comp.file ? comp.file.buffer : null,
+          ]
         );
       }
     }
     // ✅ Update or insert competitor question
-if (Array.isArray(req.body.questions)) {
-  for (const q of req.body.questions) {
-    if (q.id) {
-      await pool.query(
-        `UPDATE poll_questions
+    if (Array.isArray(req.body.questions)) {
+      for (const q of req.body.questions) {
+        if (q.id) {
+          await pool.query(
+            `UPDATE poll_questions
          SET question_text = $1, type = $2, is_competitor_question = $3
          WHERE id = $4 AND poll_id = $5`,
-        [q.question_text, q.type, q.is_competitor_question || false, q.id, pollId]
-      );
+            [
+              q.question_text,
+              q.type,
+              q.is_competitor_question || false,
+              q.id,
+              pollId,
+            ]
+          );
+        }
+      }
     }
-  }
-}
-   const competitorsResult = await pool.query(
+    const competitorsResult = await pool.query(
       `SELECT id, name, party,
               CASE
                 WHEN profile_image IS NOT NULL
@@ -264,18 +300,22 @@ if (Array.isArray(req.body.questions)) {
        WHERE poll_id=$1`,
       [pollId]
     );
-const questionsResult = await pool.query(
-  `SELECT id, type, is_competitor_question, question_text
+    const questionsResult = await pool.query(
+      `SELECT id, type, is_competitor_question, question_text
    FROM poll_questions
    WHERE poll_id = $1`,
-  [pollId]
-);
+      [pollId]
+    );
 
     await pool.query("COMMIT");
 
     res.status(200).json({
       message: "Poll updated successfully",
-      poll: { ...pollResult.rows[0], competitors: competitorsResult.rows, questions: questionsResult.rows },
+      poll: {
+        ...pollResult.rows[0],
+        competitors: competitorsResult.rows,
+        questions: questionsResult.rows,
+      },
     });
   } catch (err: any) {
     await pool.query("ROLLBACK");
@@ -311,10 +351,9 @@ router.delete("/:id", async (req, res) => {
   }
 });
 
-
 router.put("/:id/publish", async (req, res) => {
   const { id } = req.params;
-  const { published } = req.body; 
+  const { published } = req.body;
 
   try {
     const result = await pool.query(
@@ -332,7 +371,5 @@ router.put("/:id/publish", async (req, res) => {
     res.status(500).json({ message: "Failed to update publish status" });
   }
 });
-
-
 
 export default router;
