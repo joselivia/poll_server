@@ -6,13 +6,7 @@ dotenv.config();
 export const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
 });
-// export const pool = new Pool({
-//   user: "postgres",
-//   password: "@Joselivia254",
-//   host: "localhost",
-//   port: 5432,
-//   database: "polling",
-// });
+
 const createTables = async () => {
   const queries = [
     `CREATE TABLE IF NOT EXISTS polls (
@@ -21,7 +15,7 @@ const createTables = async () => {
   category TEXT NOT NULL,
   presidential TEXT,
   region TEXT NOT NULL,
-  county TEXT NOT NULL,
+  county TEXT,
   constituency TEXT ,
   ward TEXT ,
   total_votes INTEGER DEFAULT 0,
