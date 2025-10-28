@@ -8,6 +8,7 @@ import aspirant from "./routes/aspirants";
 import dotenv from "dotenv";
 import votes from "./routes/votes";
 import updateAdmin from "./routes/update-admin";
+import comments from "./routes/comments";
 dotenv.config();
 
 const app = express();
@@ -20,6 +21,7 @@ app.use("/api/login", login);
 app.use("/api/aspirant", aspirant);
 app.use("/api/votes", votes);
 app.use("/api/update-admin", updateAdmin);
+app.use("/api/comments", comments);
 
 pool.query("SELECT NOW()", (err, res) => {
   if (err) {

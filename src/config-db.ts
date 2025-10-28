@@ -83,6 +83,15 @@ id SERIAL PRIMARY KEY,
 email TEXT NOT NULL,
 password TEXT NOT NULL
 )`,
+`CREATE TABLE IF NOT EXISTS comments (
+  id SERIAL PRIMARY KEY,
+  name TEXT NOT NULL,
+  poll_id INT NOT NULL REFERENCES polls(id) ON DELETE CASCADE,
+  comment TEXT NOT NULL,
+  likes INT DEFAULT 0,
+ created_at TIMESTAMP DEFAULT NOW()
+)
+`,
   ];
 
   try {
