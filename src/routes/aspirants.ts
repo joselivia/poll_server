@@ -43,7 +43,24 @@ router.get("/published", async (req, res) => {
   
   try {
     const result = await pool.query(
-      "SELECT id, title FROM polls WHERE published = true ORDER BY created_at DESC"
+      `SELECT 
+  id, 
+  title, 
+  presidential, 
+  category, 
+  region, 
+  county, 
+  constituency, 
+  ward, 
+  total_votes, 
+  spoiled_votes, 
+  published, 
+  voting_expires_at, 
+  created_at
+FROM polls
+WHERE published = true
+ORDER BY created_at DESC
+    `
     );
     res.json(result.rows);
   } catch (err) {
