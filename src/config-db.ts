@@ -3,10 +3,16 @@ import dotenv from "dotenv";
 import { insertAdmin } from "./routes/admin";
 
 dotenv.config();
+// export const pool = new Pool({
+//   connectionString: process.env.DATABASE_URL,
+// });
 export const pool = new Pool({
-  connectionString: process.env.DATABASE_URL,
+  user: "postgres",
+  password: "@Joselivia254",
+  host: "localhost",
+  port: 5432,
+  database: "polling",
 });
-
 const createTables = async () => {
   const queries = [
     `CREATE TABLE IF NOT EXISTS polls (
@@ -37,6 +43,12 @@ const createTables = async () => {
   voter_id TEXT,
   poll_id INTEGER NOT NULL REFERENCES polls(id) ON DELETE CASCADE,
   competitor_id INTEGER NOT NULL REFERENCES poll_competitors(id) ON DELETE CASCADE,
+  name TEXT NOT NULL,
+  gender TEXT NOT NULL,
+  region TEXT ,
+  county TEXT,
+  constituency TEXT,
+  ward TEXT,
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 `,
@@ -83,6 +95,16 @@ id SERIAL PRIMARY KEY,
 email TEXT NOT NULL,
 password TEXT NOT NULL
 )`,
+// `CREATE TABLE sessions (
+//   id SERIAL PRIMARY KEY,
+//   user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+//   token TEXT NOT NULL,
+//   user_agent TEXT,
+//   ip_address TEXT,
+//   created_at TIMESTAMP DEFAULT NOW(),
+//   last_active TIMESTAMP DEFAULT NOW()
+// );
+// `,
 `CREATE TABLE IF NOT EXISTS comments (
   id SERIAL PRIMARY KEY,
   name TEXT NOT NULL,

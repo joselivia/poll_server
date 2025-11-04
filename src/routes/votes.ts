@@ -4,26 +4,37 @@ import { pool } from "../config-db";
 const router = express.Router();
 
 router.post("/", async (req, res) => {
-  const { id, competitorId,voter_id } = req.body;
+  const {
+    id: pollId,
+    competitorId,
+    voter_id,
+    name,
+    gender,
+    region,
+    county,
+    constituency,
+    ward,
+  } = req.body;
 
-  if (!id || !competitorId) {
-    return res.status(400).json({ message: "pollId and competitorId are required." });
+  if (!pollId || !competitorId || !voter_id) {
+    return res.status(400).json({ message: "Missing pollId, competitorId, or voter_id." });
   }
+
   const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
 
-try {
-  await client.query("BEGIN");
-
-  const pollSettings = await client.query(
-    `SELECT allow_multiple_votes FROM polls WHERE id = $1`,
-    [id]
-  );
+    // 1️⃣ Check poll settings
+    const pollSettings = await client.query(
+      `SELECT allow_multiple_votes FROM polls WHERE id = $1`,
+      [pollId]
+    );
 
   const allowMultiple = pollSettings.rows[0]?.allow_multiple_votes;
   if (!allowMultiple) {
     const alreadyVoted = await client.query(
       `SELECT 1 FROM votes WHERE poll_id = $1 AND voter_id = $2`,
-      [id, voter_id]
+      [pollId, voter_id]
     );
 
     if (alreadyVoted?.rowCount && alreadyVoted.rowCount > 0) {
@@ -32,38 +43,64 @@ try {
     }
   }
 
-  const check = await client.query(
+    const check = await client.query(
     `SELECT id FROM poll_competitors WHERE id = $1 AND poll_id = $2`,
-    [competitorId, id]
+    [competitorId, pollId]
   );
 
   if (check.rowCount === 0) {
     await client.query("ROLLBACK");
     return res.status(400).json({ message: "Competitor does not belong to the poll." });
   }
+    await client.query(
+      `INSERT INTO votes (
+        poll_id, competitor_id, voter_id, name, gender, region, county, constituency, ward
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+      [pollId, competitorId, voter_id, name, gender, region, county, constituency, ward]
+    );
 
-  await client.query(
-    `INSERT INTO votes (poll_id, competitor_id, voter_id) VALUES ($1, $2, $3)`,
-    [id, competitorId, voter_id]
-  );
+    // 4️⃣ Increment total votes
+    await client.query(`UPDATE polls SET total_votes = total_votes + 1 WHERE id = $1`, [pollId]);
 
-  await client.query(
-    `UPDATE polls SET total_votes = total_votes + 1 WHERE id = $1`,
-    [id]
-  );
+    await client.query("COMMIT");
+    return res.status(200).json({ message: "Vote recorded successfully!" });
 
-  await client.query("COMMIT");
-
-  return res.status(200).json({ message: "Vote recorded successfully!" });
-} catch (error) {
-  await client.query("ROLLBACK");
-  console.error("Vote Error:", error);
-  return res.status(500).json({ message: "Internal server error while recording vote." });
-} finally {
-  client.release();
-}
-
+  } catch (error) {
+    await client.query("ROLLBACK");
+    console.error("Vote Error:", error);
+    return res.status(500).json({ message: "Internal server error while recording vote." });
+  } finally {
+    client.release();
+  }
 });
+
+
+router.get("/:pollId/strongholds", async (req, res) => {
+  const { pollId } = req.params;
+
+  try {
+    const result = await pool.query(
+      `SELECT 
+         v.county,
+         v.constituency,
+         v.ward,
+         c.name AS candidate_name,
+         COUNT(*) AS total_votes
+       FROM votes v
+       JOIN poll_competitors c ON v.competitor_id = c.id
+       WHERE v.poll_id = $1
+       GROUP BY v.county, v.constituency, v.ward, c.name
+       ORDER BY v.county, v.constituency, v.ward;`,
+      [pollId]
+    );
+
+    return res.status(200).json(result.rows);
+  } catch (error) {
+    console.error("Stronghold summary error:", error);
+    return res.status(500).json({ message: "Error fetching combined stronghold data." });
+  }
+});
+
 router.get("/:id/questions", async (req, res) => {
   const pollId = parseInt(req.params.id);
 
