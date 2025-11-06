@@ -1,5 +1,7 @@
 import express from "express";
 import { pool } from "../config-db";
+import { Result } from "pg";
+import { parse } from "path";
 
 const router = express.Router();
 
@@ -62,6 +64,18 @@ router.post("/", async (req, res) => {
     // 4️⃣ Increment total votes
     await client.query(`UPDATE polls SET total_votes = total_votes + 1 WHERE id = $1`, [pollId]);
 
+const results= await client.query(
+  `SELECT COUNT(*) AS total_votes FROM votes WHERE poll_id = $1 AND competitor_id = $2`,
+  [pollId, competitorId]
+);
+
+const newVoteCount =parseInt(results.rows[0].total_votes, 10);
+await pool.query(
+  `INSERT INTO vote_history (poll_id, competitor_id, vote_count)
+   VALUES ($1, $2, $3)`,
+  [pollId, competitorId, newVoteCount]
+);
+
     await client.query("COMMIT");
     return res.status(200).json({ message: "Vote recorded successfully!" });
 
@@ -98,6 +112,30 @@ router.get("/:pollId/strongholds", async (req, res) => {
   } catch (error) {
     console.error("Stronghold summary error:", error);
     return res.status(500).json({ message: "Error fetching combined stronghold data." });
+  }
+});
+
+router.get("/:pollId/strongholds/:competitorId", async (req, res) => {
+  const { pollId, competitorId } = req.params;
+
+  try {
+    const result = await pool.query(
+      `SELECT
+        county,
+        constituency,
+        ward,
+        COUNT(*) AS total_votes
+      FROM votes
+      WHERE poll_id = $1 AND competitor_id = $2
+      GROUP BY county, constituency, ward
+      ORDER BY county, constituency, ward;`,
+      [pollId, competitorId]
+    );
+
+    return res.status(200).json(result.rows);
+  } catch (error) {
+    console.error("Stronghold summary error:", error);
+    return res.status(500).json({ message: "Error fetching stronghold data." });
   }
 });
 

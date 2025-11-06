@@ -66,7 +66,14 @@ const createTables = async () => {
       option_text TEXT NOT NULL
     );
 `,
- 
+ `CREATE TABLE IF NOT EXISTS vote_history (
+  id SERIAL PRIMARY KEY,
+  poll_id INT REFERENCES polls(id) ON DELETE CASCADE,
+  competitor_id INT REFERENCES poll_competitors(id) ON DELETE CASCADE,
+  vote_count INT,
+  recorded_at TIMESTAMP DEFAULT NOW()
+);
+`,
   `CREATE TABLE IF NOT EXISTS blog_posts (
   id SERIAL PRIMARY KEY,
   title TEXT NOT NULL,
