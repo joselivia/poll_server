@@ -144,7 +144,7 @@ router.get("/:id", async (req, res) => {
       return {
         id: row.id,
         name: row.name,
-        party: candidate?.party || "Independent",
+        party: candidate?.party || "No Party",
         profile: candidate?.profile || null,
         voteCount,
         percentage,
