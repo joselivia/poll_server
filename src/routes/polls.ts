@@ -91,7 +91,7 @@ router.post("/", async (req, res) => {
       `INSERT INTO polls (title, category, presidential, region, county, constituency, ward, voting_expires_at)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
        RETURNING id`,
-      [title, category, presidential, region, county, constituency || null, ward || null, expiry]
+      [title, category, presidential, region, county || "All", constituency || "All", ward || "All", expiry]
     );
     res.status(201).json({ id: result.rows[0].id });
   } catch (error) {

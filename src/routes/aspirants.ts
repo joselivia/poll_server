@@ -159,7 +159,7 @@ router.get("/:id", async (req, res) => {
       region: poll.region,
       county: poll.county,
       constituency: poll.constituency,
-      ward: poll.ward,
+      ward: poll.ward ,
       totalVotes: poll.total_votes || 0,
       spoiled_votes: poll.spoiled_votes || 0,
       voting_expires_at: poll.voting_expires_at,
