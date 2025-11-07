@@ -1,8 +1,5 @@
 import express from "express";
 import { pool } from "../config-db";
-import { Result } from "pg";
-import { parse } from "path";
-
 const router = express.Router();
 
 router.post("/", async (req, res) => {
