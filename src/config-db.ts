@@ -3,16 +3,16 @@ import dotenv from "dotenv";
 import { insertAdmin } from "./routes/admin";
 
 dotenv.config();
-export const pool = new Pool({
-  connectionString: process.env.DATABASE_URL,
-});
 // export const pool = new Pool({
-//   user: "postgres",
-//   password: "@Joselivia254",
-//   host: "localhost",
-//   port: 5432,
-//   database: "polling",
+//   connectionString: process.env.DATABASE_URL,
 // });
+export const pool = new Pool({
+  user: "postgres",
+  password: "@Joselivia254",
+  host: "localhost",
+  port: 5432,
+  database: "polling",
+});
 const createTables = async () => {
   const queries = [
     `CREATE TABLE IF NOT EXISTS polls (

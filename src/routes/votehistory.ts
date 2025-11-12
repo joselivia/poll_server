@@ -20,32 +20,43 @@ router.get("/history/:pollId", async (req, res) => {
   const sqlInterval = intervalMap[intervalParam as keyof typeof intervalMap] || "15 minutes";
 
   try {
+const query = `
+  WITH time_series AS (
+    SELECT generate_series(
+      NOW() - INTERVAL '${sqlInterval}',
+      NOW(),
+      INTERVAL '1 minute'
+    ) AS recorded_time
+  ),
+  votes AS (
+    SELECT 
+      c.id AS competitor_id,
+      vh.recorded_at,
+      COUNT(*) OVER (PARTITION BY c.id ORDER BY vh.recorded_at) AS cumulative_votes
+    FROM poll_competitors c
+    LEFT JOIN vote_history vh
+      ON vh.competitor_id = c.id
+     AND vh.poll_id = $1
+  )
+  SELECT 
+    t.recorded_time,
+    v.competitor_id,
+    COALESCE((
+      SELECT v2.cumulative_votes
+      FROM votes v2
+      WHERE v2.competitor_id = v.competitor_id
+        AND v2.recorded_at <= t.recorded_time
+      ORDER BY v2.recorded_at DESC
+      LIMIT 1
+    ), 0) AS cumulative_votes
+  FROM time_series t
+  CROSS JOIN (SELECT DISTINCT competitor_id FROM votes) v
+  ORDER BY t.recorded_time ASC;
+`;  
     const { rows } = await pool.query(
-      `
-      WITH time_series AS (
-        SELECT generate_series(
-          NOW() - INTERVAL '${sqlInterval}',
-          NOW(),
-          INTERVAL '1 minute'
-        ) AS recorded_time
-      )
-      SELECT 
-        t.recorded_time,
-        c.id AS competitor_id,
-        COALESCE((
-          SELECT COUNT(*) 
-          FROM vote_history vh
-          WHERE vh.competitor_id = c.id
-            AND vh.poll_id = $1
-            AND vh.recorded_at <= t.recorded_time
-        ), 0) AS cumulative_votes
-      FROM time_series t
-      CROSS JOIN poll_competitors c
-      ORDER BY t.recorded_time ASC;
-      `,
-      [pollId]
-    );
-
+  query,
+  [pollId]
+);
     res.json(rows);
   } catch (err) {
     console.error("History fetch error:", err);
@@ -53,7 +64,7 @@ router.get("/history/:pollId", async (req, res) => {
   }
 });
 
-// --- Live stream (SSE) endpoint ---
+//--- Live stream (SSE) endpoint --- SEND ONLY LATEST ---
 router.get("/live-stream/:pollId", async (req, res) => {
   res.set({
     "Cache-Control": "no-cache",
@@ -63,48 +74,34 @@ router.get("/live-stream/:pollId", async (req, res) => {
   res.flushHeaders?.();
 
   const pollId = req.params.pollId;
-  const intervalParam = req.query.interval || "15m";
-  const sqlInterval = intervalMap[intervalParam as keyof typeof intervalMap] || "15 minutes";
 
-  const sendUpdates = async () => {
+  const sendLatest = async () => {
     try {
-      const { rows } = await pool.query(
-        `
-        WITH time_series AS (
-          SELECT generate_series(
-            NOW() - INTERVAL '${sqlInterval}',
-            NOW(),
-            INTERVAL '1 minute'
-          ) AS recorded_time
-        )
+      const query = `
         SELECT 
-          t.recorded_time,
           c.id AS competitor_id,
-          COALESCE((
-            SELECT COUNT(*) 
-            FROM vote_history vh
-            WHERE vh.competitor_id = c.id
-              AND vh.poll_id = $1
-              AND vh.recorded_at <= t.recorded_time
-          ), 0) AS cumulative_votes
-        FROM time_series t
-        CROSS JOIN poll_competitors c
-        ORDER BY t.recorded_time ASC;
-        `,
-        [pollId]
-      );
+          c.name,
+          COUNT(vh.id) AS cumulative_votes
+        FROM poll_competitors c
+        LEFT JOIN vote_history vh ON vh.competitor_id = c.id AND vh.poll_id = $1
+        WHERE c.poll_id = $1
+        GROUP BY c.id, c.name
+      `;
 
-      res.write(`data: ${JSON.stringify(rows)}\n\n`);
+      const { rows } = await pool.query(query, [pollId]);
+      const timestamp = new Date().toISOString();
+
+      // Send only: [{ competitor_id, name, cumulative_votes, timestamp }]
+      res.write(`data: ${JSON.stringify({ timestamp, updates: rows })}\n\n`);
     } catch (err) {
-      console.error("Live stream error:", err);
-      res.write(`data: ${JSON.stringify({ error: "Error fetching data" })}\n\n`);
+      console.error(err);
     }
   };
 
-  const interval = setInterval(sendUpdates, 15000);
-  sendUpdates();
+  // Send immediately, then every 2–5 seconds
+  sendLatest();
+  const interval = setInterval(sendLatest, 3000);
 
   req.on("close", () => clearInterval(interval));
 });
-
 export default router;
