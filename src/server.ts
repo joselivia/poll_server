@@ -10,7 +10,7 @@ import votes from "./routes/votes";
 import updateAdmin from "./routes/update-admin";
 import comments from "./routes/comments";
 import liveVotes from "./routes/votehistory";
-
+import opinionsPolls from "./routes/opinion_poll";
 dotenv.config();
 
 const app = express();
@@ -25,7 +25,7 @@ app.use("/api/votes", votes);
 app.use("/api/update-admin", updateAdmin);
 app.use("/api/comments", comments);
 app.use("/api/live-votes", liveVotes);
-
+app.use("/api/Opinions", opinionsPolls);
 pool.query("SELECT NOW()", (err, res) => {
   if (err) {
     console.error("❌ Database connection failed:", err);
