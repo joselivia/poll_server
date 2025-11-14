@@ -112,6 +112,7 @@ password TEXT NOT NULL
 //   last_active TIMESTAMP DEFAULT NOW()
 // );
 // `,
+
 `CREATE TABLE IF NOT EXISTS comments (
   id SERIAL PRIMARY KEY,
   name TEXT NOT NULL,

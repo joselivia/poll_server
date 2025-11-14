@@ -4,7 +4,6 @@ const router = express.Router();
 
 router.post('/', async (req, res) => {
     const { pollId, respondent, answers } = req.body;
-
     if (!pollId || !respondent || !answers || !Array.isArray(answers)) {
         return res.status(400).json({ error: "Missing required fields: pollId, respondent, or answers array." });
     }

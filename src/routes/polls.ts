@@ -20,7 +20,7 @@ interface Option {
 
 interface Question {
   id: number;
-  type: 'single-choice' | 'open-ended' | 'yes-no-notsure';
+  type: 'multi-choice'| 'single-choice' | 'open-ended' | 'yes-no-notsure';
   questionText: string;
   options?: Option[];
   isCompetitorQuestion?: boolean;
@@ -44,7 +44,7 @@ interface PollData {
 interface AggregatedResponse {
   questionId: number;
   questionText: string;
-  type: 'single-choice' | 'open-ended' | 'yes-no-notsure';
+  type: 'single-choice'| 'multi-choice' | 'open-ended' | 'yes-no-notsure';
   isCompetitorQuestion?: boolean;
   totalResponses: number;
   choices?: {
@@ -54,6 +54,7 @@ interface AggregatedResponse {
     percentage: number;
   }[];
   openEndedResponses?: string[];
+   totalSelections?: number; 
 }
 
 interface DemographicsData {
@@ -141,7 +142,7 @@ router.post("/createQuiz", upload.any(), async (req, res) => {
       );
 
       const questionId = questionInsert.rows[0].id;
-      if (type === "single-choice" || type === "yes-no-notsure") {
+      if (type === "single-choice" || type === "multi-choice" || type === "yes-no-notsure") {
         for (const opt of options) {
           await client.query(
             `INSERT INTO poll_options (question_id, option_text) VALUES ($1, $2)`,
@@ -221,7 +222,7 @@ router.get("/:id", async (req, res) => {
     for (const q of questionsRes.rows) {
       let options: { id: number; optionText: string }[] = [];
 
-      if (q.type === "single-choice" || q.type === "yes-no-notsure") {
+      if (q.type === "single-choice" || q.type === "multi-choice" || q.type === "yes-no-notsure") {
         const opts = await client.query(
           `SELECT id, option_text FROM poll_options WHERE question_id = $1 ORDER BY id`, 
           [q.id]
@@ -272,7 +273,7 @@ router.get("/:id", async (req, res) => {
 router.post("/:pollId/vote", async (req, res) => {
   const pollId = parseInt(req.params.pollId);
   const { userIdentifier, responses, respondentName, respondentAge, respondentGender } = req.body;
-  if (isNaN(pollId) || !userIdentifier || !Array.isArray(responses) || responses.length === 0 || !respondentName || !respondentAge || !respondentGender) {
+  if (isNaN(pollId) || !userIdentifier || !Array.isArray(responses) || responses.length === 0 || !respondentGender) {
     return res.status(400).json({ message: "Missing respondent details or responses." });
   }
 
@@ -281,61 +282,123 @@ router.post("/:pollId/vote", async (req, res) => {
     client = await pool.connect();
     await client.query("BEGIN"); 
 
-    for (const response of responses) {
-      const { questionId, selectedCompetitorId, selectedOptionId, openEndedResponse } = response;
+for (const response of responses) {
+  const {
+    questionId,
+    selectedCompetitorId,
+    selectedOptionId,
+    selectedCompetitorIds,
+    selectedOptionIds,
+    openEndedResponse,
+  } = response;
 
-      const questionCheck = await client.query(
-        `SELECT id, type FROM poll_questions WHERE id = $1 AND poll_id = $2`,
-        [questionId, pollId]
-      );
-      if (questionCheck.rows.length === 0) {
-        throw new Error(`Question ID ${questionId} not found for poll ${pollId}.`);
-      }
-      const questionType = questionCheck.rows[0].type;
+  const questionCheck = await client.query(
+    `SELECT id, type FROM poll_questions WHERE id = $1 AND poll_id = $2`,
+    [questionId, pollId]
+  );
 
-      if (questionType === 'open-ended') {
-        if (typeof openEndedResponse !== 'string' || openEndedResponse.trim() === '') {
-          throw new Error(`Open-ended response missing or invalid for question ID ${questionId}.`);
-        }
-        await client.query(
-          `INSERT INTO poll_responses (poll_id, user_identifier, question_id, open_ended_response, respondent_name, respondent_age, respondent_gender)
-           VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-          [pollId, userIdentifier, questionId, openEndedResponse.trim(), respondentName, respondentAge, respondentGender]
-        );
-      } else if (questionType === 'single-choice' || questionType === 'yes-no-notsure') {
-        if (selectedCompetitorId) {
-          const competitorCheck = await client.query(
-            `SELECT id FROM poll_competitors WHERE id = $1 AND poll_id = $2`,
-            [selectedCompetitorId, pollId]
-          );
-          if (competitorCheck.rows.length === 0) {
-            throw new Error(`Competitor ID ${selectedCompetitorId} not found for poll ${pollId}.`);
-          }
-          await client.query(
-            `INSERT INTO poll_responses (poll_id, user_identifier, question_id, selected_competitor_id, respondent_name, respondent_age, respondent_gender)
-             VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-            [pollId, userIdentifier, questionId, selectedCompetitorId, respondentName, respondentAge, respondentGender]
-          );
-        } else if (selectedOptionId) {
-          const optionCheck = await client.query(
-            `SELECT id FROM poll_options WHERE id = $1 AND question_id = $2`,
-            [selectedOptionId, questionId]
-          );
-          if (optionCheck.rows.length === 0) {
-            throw new Error(`Option ID ${selectedOptionId} not found for question ID ${questionId}.`);
-          }
-          await client.query(
-            `INSERT INTO poll_responses (poll_id, user_identifier, question_id, selected_option_id, respondent_name, respondent_age, respondent_gender)
-             VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-            [pollId, userIdentifier, questionId, selectedOptionId, respondentName, respondentAge, respondentGender]
-          );
-        } else {
-          throw new Error(`No valid selection for question ID ${questionId} (single-choice/yes-no).`);
-        }
-      } else {
-        throw new Error(`Unsupported question type for question ID ${questionId}: ${questionType}`);
-      }
+  if (questionCheck.rows.length === 0) {
+    throw new Error(`Question ID ${questionId} not found for poll ${pollId}.`);
+  }
+
+  const questionType = questionCheck.rows[0].type;
+
+  // 🟩 OPEN-ENDED
+  if (questionType === "open-ended") {
+    if (typeof openEndedResponse !== "string" || openEndedResponse.trim() === "") {
+      throw new Error(`Open-ended response missing or invalid for question ID ${questionId}.`);
     }
+
+    await client.query(
+      `INSERT INTO poll_responses (
+        poll_id, user_identifier, question_id, open_ended_response,
+        respondent_name, respondent_age, respondent_gender
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+      [
+        pollId,
+        userIdentifier,
+        questionId,
+        openEndedResponse.trim(),
+        respondentName,
+        respondentAge,
+        respondentGender,
+      ]
+    );
+  }
+
+  // 🟦 CHOICE-BASED: single, multi, or yes-no-notsure
+  else if (
+    questionType === "single-choice" ||
+    questionType === "multi-choice" ||
+    questionType === "yes-no-notsure"
+  ) {
+    // normalize input (for single choice → treat as an array)
+    const optionIds = selectedOptionIds || (selectedOptionId ? [selectedOptionId] : []);
+    const competitorIds = selectedCompetitorIds || (selectedCompetitorId ? [selectedCompetitorId] : []);
+
+    if (optionIds.length === 0 && competitorIds.length === 0) {
+      throw new Error(`No valid selection for question ID ${questionId}.`);
+    }
+
+    // ✅ handle selected options
+    for (const optionId of optionIds) {
+      const optionCheck = await client.query(
+        `SELECT id FROM poll_options WHERE id = $1 AND question_id = $2`,
+        [optionId, questionId]
+      );
+      if (optionCheck.rows.length === 0) {
+        throw new Error(`Option ID ${optionId} not found for question ID ${questionId}.`);
+      }
+
+      await client.query(
+        `INSERT INTO poll_responses (
+          poll_id, user_identifier, question_id, selected_option_id,
+          respondent_name, respondent_age, respondent_gender
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+        [
+          pollId,
+          userIdentifier,
+          questionId,
+          optionId,
+          respondentName,
+          respondentAge,
+          respondentGender,
+        ]
+      );
+    }
+
+    // ✅ handle selected competitors
+    for (const competitorId of competitorIds) {
+      const competitorCheck = await client.query(
+        `SELECT id FROM poll_competitors WHERE id = $1 AND poll_id = $2`,
+        [competitorId, pollId]
+      );
+      if (competitorCheck.rows.length === 0) {
+        throw new Error(`Competitor ID ${competitorId} not found for poll ${pollId}.`);
+      }
+
+      await client.query(
+        `INSERT INTO poll_responses (
+          poll_id, user_identifier, question_id, selected_competitor_id,
+          respondent_name, respondent_age, respondent_gender
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+        [
+          pollId,
+          userIdentifier,
+          questionId,
+          competitorId,
+          respondentName,
+          respondentAge,
+          respondentGender,
+        ]
+      );
+    }
+  }
+
+  else {
+    throw new Error(`Unsupported question type for question ID ${questionId}: ${questionType}`);
+  }
+}
 
     await client.query("COMMIT"); 
     res.status(201).json({ message: "Votes submitted successfully." });
@@ -354,21 +417,29 @@ router.post("/:pollId/vote", async (req, res) => {
 
 router.get("/:pollId/results", async (req, res) => {
   const pollId = parseInt(req.params.pollId);
+  let client: PoolClient | null = null;
+
   if (isNaN(pollId)) {
     return res.status(400).json({ message: "Invalid poll ID." });
   }
 
-  let client: PoolClient | null = null; 
   try {
     client = await pool.connect();
+
     const pollResult = await client.query(
       `SELECT
-          p.id, p.title, p.category, p.presidential, p.region, p.county, p.constituency, p.ward, p.created_at,
+          p.id, p.title, p.category, p.presidential, p.region, p.county, p.constituency, p.ward, p.created_at, p.voting_expires_at,
           json_agg(DISTINCT jsonb_build_object('id', c.id, 'name', c.name, 'party', c.party, 'profileImage', encode(c.profile_image, 'base64'))) AS competitors,
-          json_agg(DISTINCT jsonb_build_object('id', q.id, 'type', q.type, 'questionText', q.question_text, 'options', (SELECT json_agg(jsonb_build_object('id', o.id, 'optionText', o.option_text)) FROM poll_options o WHERE o.question_id = q.id), 'isCompetitorQuestion', q.is_competitor_question)) AS questions
+          json_agg(DISTINCT jsonb_build_object(
+            'id', q.id,
+            'type', q.type,
+            'questionText', q.question_text,
+            'options', (SELECT json_agg(jsonb_build_object('id', o.id, 'optionText', o.option_text)) FROM poll_options o WHERE o.question_id = q.id),
+            'isCompetitorQuestion', q.is_competitor_question
+          )) AS questions
         FROM polls p
-        LEFT JOIN poll_competitors c ON p.id = c.poll_id -- Corrected JOIN alias to 'c'
-        LEFT JOIN poll_questions q ON p.id = q.poll_id   -- Corrected JOIN alias to 'q'
+        LEFT JOIN poll_competitors c ON p.id = c.poll_id
+        LEFT JOIN poll_questions q ON p.id = q.poll_id
         WHERE p.id = $1
         GROUP BY p.id
       `,
@@ -378,23 +449,27 @@ router.get("/:pollId/results", async (req, res) => {
     if (pollResult.rows.length === 0) {
       return res.status(404).json({ message: "Poll not found." });
     }
+
     const pollData = pollResult.rows[0];
 
-    const formattedCompetitors = pollData.competitors[0] === null ? [] : pollData.competitors.map((comp: any) => ({
-      id: comp.id,
-      name: comp.name,
-      party: comp.party,
-      profileImage: comp.profileImage ? `data:image/png;base64,${comp.profileImage}` : null,
-    }));
+    const formattedCompetitors = (!pollData.competitors || pollData.competitors[0] === null)
+      ? []
+      : pollData.competitors.map((comp: any) => ({
+          id: comp.id,
+          name: comp.name,
+          party: comp.party,
+          profileImage: comp.profileImage ? `data:image/png;base64,${comp.profileImage}` : null,
+        }));
 
-    const formattedQuestions = pollData.questions[0] === null ? [] : pollData.questions.map((q: any) => ({
-      id: q.id,
-      type: q.type,
-      questionText: q.questionText,
-      options: q.options ? q.options.map((o: any) => ({ id: o.id, optionText: o.optionText })) : [],
-      isCompetitorQuestion: q.isCompetitorQuestion,
-    }));
-
+    const formattedQuestions = (!pollData.questions || pollData.questions[0] === null)
+      ? []
+      : pollData.questions.map((q: any) => ({
+          id: q.id,
+          type: q.type,
+          questionText: q.questionText,
+          options: q.options ? q.options.map((o: any) => ({ id: o.id, optionText: o.optionText })) : [],
+          isCompetitorQuestion: q.isCompetitorQuestion === true,
+        }));
 
     const formattedPollData: PollData = {
       id: pollData.id,
@@ -406,93 +481,139 @@ router.get("/:pollId/results", async (req, res) => {
       constituency: pollData.constituency,
       ward: pollData.ward,
       createdAt: pollData.created_at,
-      voting_expires_at:pollData.voting_expires_at,
+      voting_expires_at: pollData.voting_expires_at,
       competitors: formattedCompetitors,
       questions: formattedQuestions,
     };
 
     const responsesResult = await client.query(
-      `SELECT question_id, selected_competitor_id, selected_option_id, open_ended_response, respondent_gender, respondent_age
+      `SELECT user_identifier, question_id, selected_competitor_id, selected_option_id, open_ended_response, respondent_gender, respondent_age
        FROM poll_responses
        WHERE poll_id = $1`,
       [pollId]
     );
-    const allResponses = responsesResult.rows;
+
+    const allResponses = responsesResult.rows; 
 
     const aggregatedResponses: AggregatedResponse[] = [];
-    for (const question of formattedPollData.questions) {
-      const questionResponses = allResponses.filter(r => r.question_id === question.id);
-      const totalResponsesForQuestion = questionResponses.length;
 
-      let aggregatedQuestion: AggregatedResponse = {
+    for (const question of formattedPollData.questions) {
+// Filter responses for the current question, ensuring type consistency
+const questionResponses = allResponses.filter(
+  (r: any) => Number(r.question_id) === Number(question.id)
+);
+
+// Count unique respondents by converting identifiers to strings
+const uniqueRespondents = new Set(
+  questionResponses.map((r: any) => String(r.user_identifier))
+).size;
+
+      const aggregatedQuestion: AggregatedResponse = {
         questionId: question.id,
         questionText: question.questionText,
         type: question.type,
         isCompetitorQuestion: question.isCompetitorQuestion,
-        totalResponses: totalResponsesForQuestion,
+        totalResponses: uniqueRespondents,
       };
 
-      if (question.type === 'open-ended') {
+      if (question.type === "open-ended") {
         aggregatedQuestion.openEndedResponses = questionResponses
-          .map(r => r.open_ended_response)
-          .filter(Boolean); 
-      } else if (question.isCompetitorQuestion) {
-        const choiceCounts = new Map<number, number>(); 
-        questionResponses.forEach(r => {
-          if (r.selected_competitor_id !== null) {
-            choiceCounts.set(r.selected_competitor_id, (choiceCounts.get(r.selected_competitor_id) || 0) + 1);
+          .map((r: any) => r.open_ended_response)
+          .filter(Boolean);
+      } else {
+        // build counts
+        const optionCounts = new Map<number, number>();
+        const competitorCounts = new Map<number, number>();
+
+        questionResponses.forEach((r: any) => {
+          if (r.selected_option_id !== null && r.selected_option_id !== undefined) {
+            const id = Number(r.selected_option_id);
+            optionCounts.set(id, (optionCounts.get(id) || 0) + 1);
+          }
+          if (r.selected_competitor_id !== null && r.selected_competitor_id !== undefined) {
+            const id = Number(r.selected_competitor_id);
+            competitorCounts.set(id, (competitorCounts.get(id) || 0) + 1);
           }
         });
 
-        aggregatedQuestion.choices = Array.from(choiceCounts.entries()).map(([id, count]) => {
-          const competitor = formattedPollData.competitors.find((comp: Competitor) => comp.id === id); 
-          return {
-            id,
-            label: competitor ? competitor.name : `Unknown Competitor ${id}`,
-            count,
-            percentage: totalResponsesForQuestion > 0 ? (count / totalResponsesForQuestion) * 100 : 0,
-          };
-        });
-      } else if (question.type === 'single-choice' || question.type === 'yes-no-notsure') {
-        const choiceCounts = new Map<number, number>();
-        questionResponses.forEach(r => {
-          if (r.selected_option_id !== null) {
-            choiceCounts.set(r.selected_option_id, (choiceCounts.get(r.selected_option_id) || 0) + 1);
-          }
-        });
+        // ----- OPTIONS (single / multi / yes-no) -----
+        if (optionCounts.size > 0) {
+      
+if (question.type === "multi-choice") {
+  const totalSelections = Array.from(optionCounts.values()).reduce((a, b) => a + b, 0);
 
-        aggregatedQuestion.choices = Array.from(choiceCounts.entries()).map(([id, count]) => {
-          const option = question.options?.find((opt: Option) => opt.id === id); 
-          return {
-            id,
-            label: option ? option.optionText : `Unknown Option ${id}`,
-            count,
-            percentage: totalResponsesForQuestion > 0 ? (count / totalResponsesForQuestion) * 100 : 0,
-          };
-        });
+  aggregatedQuestion.choices = Array.from(optionCounts.entries()).map(([id, count]) => {
+    const option = question.options?.find((opt: Option) => opt.id === id);
+    return {
+      id,
+      label: option ? option.optionText : `Option ${id}`,
+      count,
+      percentage: totalSelections > 0 ? (count / totalSelections) * 100 : 0,
+    };
+  });
+
+  aggregatedQuestion.totalSelections = totalSelections;
+}
+ else {
+            // single-choice or yes-no-notsure => percent of unique respondents
+            aggregatedQuestion.choices = Array.from(optionCounts.entries()).map(([id, count]) => {
+              const option = question.options?.find((opt: Option) => opt.id === id);
+              const percentage = uniqueRespondents > 0 ? (count / uniqueRespondents) * 100 : 0;
+              return {
+                id,
+                label: option ? option.optionText : `Option ${id}`,
+                count,
+                percentage: Number(percentage.toFixed(2)),
+              };
+            }).sort((a, b) => b.count - a.count);
+          }
+        }
+
+        // ----- COMPETITOR QUESTIONS -----
+        if (competitorCounts.size > 0) {
+          // Decide denominator: if competitorSelections > uniqueRespondents treat like multi-select; otherwise treat like single-select (per-user)
+          const totalCompetitorSelections = Array.from(competitorCounts.values()).reduce((a, b) => a + b, 0);
+          const useSelectionsAsDenominator = totalCompetitorSelections > uniqueRespondents;
+
+          aggregatedQuestion.choices = Array.from(competitorCounts.entries()).map(([id, count]) => {
+            const competitor = formattedPollData.competitors.find((c: Competitor) => c.id === id);
+            const label = competitor ? competitor.name : `Competitor ${id}`;
+            const denom = useSelectionsAsDenominator ? totalCompetitorSelections : uniqueRespondents;
+            const percentage = denom > 0 ? (count / denom) * 100 : 0;
+            return {
+              id,
+              label,
+              count,
+              percentage: Number(percentage.toFixed(2)),
+            };
+          }).sort((a, b) => b.count - a.count);
+        }
       }
+
       aggregatedResponses.push(aggregatedQuestion);
     }
 
-    const totalRespondents = new Set(allResponses.map(r => r.respondent_id)).size;
+    // overall demographics (across poll)
+    const totalRespondents = new Set(allResponses.map((r: any) => r.user_identifier)).size;
     const genderCounts = new Map<string, number>();
-    const ageCounts = new Map<string, number>(); 
+    const ageCounts = new Map<string, number>();
 
-    allResponses.forEach(r => {
+    allResponses.forEach((r: any) => {
       if (r.respondent_gender) {
-        const gender = r.respondent_gender;
-        genderCounts.set(gender, (genderCounts.get(gender) || 0) + 1);
+        const g = String(r.respondent_gender);
+        genderCounts.set(g, (genderCounts.get(g) || 0) + 1);
       }
       if (r.respondent_age) {
-        const age = parseInt(r.respondent_age);
-        let ageRange: string;
-        if (age >= 18 && age <= 24) ageRange = '18-24';
-        else if (age >= 25 && age <= 34) ageRange = '25-34';
-        else if (age >= 35 && age <= 44) ageRange = '35-44';
-        else if (age >= 45 && age <= 54) ageRange = '45-54';
-        else if (age >= 55 && age <= 64) ageRange = '55-64';
-        else if (age >= 65 && age <= 74) ageRange = '65-74';
-        else ageRange = '75+';
+        const age = parseInt(r.respondent_age, 10);
+        let ageRange = "75+";
+        if (!isNaN(age)) {
+          if (age >= 18 && age <= 24) ageRange = "18-24";
+          else if (age >= 25 && age <= 34) ageRange = "25-34";
+          else if (age >= 35 && age <= 44) ageRange = "35-44";
+          else if (age >= 45 && age <= 54) ageRange = "45-54";
+          else if (age >= 55 && age <= 64) ageRange = "55-64";
+          else if (age >= 65 && age <= 74) ageRange = "65-74";
+        }
         ageCounts.set(ageRange, (ageCounts.get(ageRange) || 0) + 1);
       }
     });
@@ -501,34 +622,33 @@ router.get("/:pollId/results", async (req, res) => {
       gender: Array.from(genderCounts.entries()).map(([label, count]) => ({
         label,
         count,
-        percentage: totalRespondents > 0 ? (count / totalRespondents) * 100 : 0,
+        percentage: totalRespondents > 0 ? Number(((count / totalRespondents) * 100).toFixed(2)) : 0,
       })),
       ageRanges: Array.from(ageCounts.entries()).map(([label, count]) => ({
         label,
         count,
-        percentage: totalRespondents > 0 ? (count / totalRespondents) * 100 : 0,
-      })).sort((a, b) => { 
-        const order = ['18-24', '25-34', '35-44', '45-54', '55-64', '65-74', '75+'];
+        percentage: totalRespondents > 0 ? Number(((count / totalRespondents) * 100).toFixed(2)) : 0,
+      })).sort((a, b) => {
+        const order = ["18-24", "25-34", "35-44", "45-54", "55-64", "65-74", "75+"];
         return order.indexOf(a.label) - order.indexOf(b.label);
       }),
-      totalRespondents: totalRespondents,
+      totalRespondents,
     };
-
 
     res.status(200).json({
       poll: formattedPollData,
-      aggregatedResponses: aggregatedResponses,
-      demographics: demographics,
+      aggregatedResponses,
+      demographics,
+
     });
 
   } catch (error) {
     console.error("Error fetching poll results:", error);
     res.status(500).json({ message: "Internal server error while fetching poll results." });
   } finally {
-    if (client) {
-      client.release();
-    }
+    if (client) client.release();
   }
 });
+
 
 export default router;
