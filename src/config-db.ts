@@ -95,8 +95,7 @@ const createTables = async () => {
   ward TEXT,
     user_identifier TEXT NOT NULL, 
     selected_option_ids INT[],
-    question_id INT NOT NULL REFERENCES poll_questions(id) ON DELETE CASCADE,
-    selected_competitor_id INT REFERENCES poll_competitors(id) ON DELETE CASCADE,
+    selected_competitor_ids INT[],
     open_ended_response TEXT,
     voted_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );

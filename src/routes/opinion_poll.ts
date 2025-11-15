@@ -27,12 +27,7 @@ interface PollData {
   title: string;
   category: string;
   presidential: string | null;
-  region: string;
-  county: string;
-  constituency: string;
-  ward: string;
   createdAt: string;
-  voting_expires_at: string | null;
   competitors: Competitor[];
   questions: Question[];
 }
@@ -60,152 +55,71 @@ interface DemographicsData {
 }
 router.post("/:pollId/vote", async (req, res) => {
   const pollId = parseInt(req.params.pollId);
-  const { userIdentifier, responses, respondentName, respondentAge, respondentGender } = req.body;
+  const { userIdentifier, responses, respondentName, respondentAge, respondentGender,region,
+    county,
+    constituency,
+    ward} = req.body;
   if (isNaN(pollId) || !userIdentifier || !Array.isArray(responses) || responses.length === 0 || !respondentGender) {
     return res.status(400).json({ message: "Missing respondent details or responses." });
   }
-  const client = await pool.connect();
-  try {
-    await client.query("BEGIN"); 
-
-for (const response of responses) {
-  const {
-    questionId,
-    selectedCompetitorId,
-    selectedOptionId,
-    selectedCompetitorIds,
-    selectedOptionIds,
-    openEndedResponse,
-  } = response;
-
-  const questionCheck = await client.query(
-    `SELECT id, type FROM poll_questions WHERE id = $1 AND poll_id = $2`,
-    [questionId, pollId]
-  );
-
-  if (questionCheck.rows.length === 0) {
-    throw new Error(`Question ID ${questionId} not found for poll ${pollId}.`);
-  }
-
-  const questionType = questionCheck.rows[0].type;
-
-  // 🟩 OPEN-ENDED
-if (questionType === "open-ended") {
-  await client.query(`
-    INSERT INTO poll_responses (
-      poll_id, user_identifier, question_id, open_ended_response,
-      respondent_name, respondent_age, respondent_gender,
-      region, county, constituency, ward
-    ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
-  `, [
-    pollId,
-    userIdentifier,
-    questionId,
-    openEndedResponse,
-    respondentName,
-    respondentAge,
-    respondentGender,
-    req.body.region,
-    req.body.county,
-    req.body.constituency,
-    req.body.ward
-  ]);
-}
-
-
-  // 🟦 CHOICE-BASED: single, multi, or yes-no-notsure
-  else if (
-    questionType === "single-choice" ||
-    questionType === "multi-choice" ||
-    questionType === "yes-no-notsure"
-  ) {
-    // normalize input (for single choice → treat as an array)
-    const optionIds = selectedOptionIds || (selectedOptionId ? [selectedOptionId] : null);
-    const competitorIds = selectedCompetitorIds || (selectedCompetitorId ? [selectedCompetitorId] : []);
-
-    if (optionIds.length === 0 && competitorIds.length === 0) {
-      throw new Error(`No valid selection for question ID ${questionId}.`);
+  const selectedOptionIds: number[] = [];
+  const selectedCompetitorIds: number[] = [];
+  let openEndedResponse: string | null = null;
+  for (const r of responses) {
+    // Multi-choice or single-choice
+    if (r.selectedOptionIds) {
+      if (Array.isArray(r.selectedOptionIds)) {
+        selectedOptionIds.push(...r.selectedOptionIds);
+      } else {
+        selectedOptionIds.push(r.selectedOptionIds);
+      }
     }
 
-    // ✅ handle selected options
-await client.query(`
+    // Competitor selections
+    if (r.selectedCompetitorId) {
+      if (Array.isArray(r.selectedCompetitorId)) {
+        selectedCompetitorIds.push(...r.selectedCompetitorId);
+      } else {
+        selectedCompetitorIds.push(r.selectedCompetitorId);
+      }
+    }
+
+    // Open-ended (store the LAST one)
+    if (r.openEndedResponse) {
+      openEndedResponse = r.openEndedResponse;
+    }
+  }
+  try {
+
+await pool.query(`
   INSERT INTO poll_responses (
-    poll_id, user_identifier, question_id,
-    selected_option_ids, open_ended_response,
+    poll_id, user_identifier,
+    selected_option_ids, selected_competitor_ids,
+    open_ended_response,
     respondent_name, respondent_age, respondent_gender,
     region, county, constituency, ward
   )
   VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
 `, [
-  pollId,
-  userIdentifier,
-  questionId,
-  optionIds,
-  openEndedResponse || null,
-  respondentName,
-  respondentAge,
-  respondentGender,
-  req.body.region,
-  req.body.county,
-  req.body.constituency,
-  req.body.ward
+  pollId,                               
+  userIdentifier,                       
+  selectedOptionIds.length > 0 ? selectedOptionIds : null,  
+  selectedCompetitorIds.length > 0 ? selectedCompetitorIds : null, 
+  openEndedResponse,                    
+  respondentName,                      
+  respondentAge,                        
+  respondentGender,                     
+  region,                            
+  county,                            
+  constituency,                      
+  ward                               
 ]);
 
-
-
-    // ✅ handle selected competitors
-    for (const competitorId of competitorIds) {
-      const competitorCheck = await client.query(
-        `SELECT id FROM poll_competitors WHERE id = $1 AND poll_id = $2`,
-        [competitorId, pollId]
-      );
-      if (competitorCheck.rows.length === 0) {
-        throw new Error(`Competitor ID ${competitorId} not found for poll ${pollId}.`);
-      }
-
-await client.query(`
-  INSERT INTO poll_responses (
-    poll_id, user_identifier, question_id,
-    selected_competitor_id,
-    respondent_name, respondent_age, respondent_gender,
-    region, county, constituency, ward
-  )
-  VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
-`, [
-  pollId,
-  userIdentifier,
-  questionId,
-  selectedCompetitorId,
-  respondentName,
-  respondentAge,
-  respondentGender,
-  req.body.region,
-  req.body.county,
-  req.body.constituency,
-  req.body.ward
-]);
-
-    }
-  }
-
-  else {
-    throw new Error(`Unsupported question type for question ID ${questionId}: ${questionType}`);
-  }
-}
-
-    await client.query("COMMIT"); 
     res.status(201).json({ message: "Votes submitted successfully." });
   } catch (error: any) {
-    if (client) {
-      await client.query("ROLLBACK");
-    }
-    console.error("Vote submission transaction error:", error);
+     console.error("Vote submission transaction error:", error);
     res.status(500).json({ message: error.message || "Failed to submit votes." });
-  } finally {
-    if (client) {
-      client.release();
-    }
-  }
+  } 
 });
 
 router.get("/:pollId/results", async (req, res) => {
@@ -215,9 +129,9 @@ router.get("/:pollId/results", async (req, res) => {
   if (isNaN(pollId)) {
     return res.status(400).json({ message: "Invalid poll ID." });
   }
-  const client = await pool.connect();
+
   try {
-    const pollResult = await client.query(
+    const pollResult = await pool.query(
       `SELECT
           p.id, p.title, p.category, p.presidential, p.region, p.county, p.constituency, p.ward, p.created_at, p.voting_expires_at,
           json_agg(DISTINCT jsonb_build_object('id', c.id, 'name', c.name, 'party', c.party, 'profileImage', encode(c.profile_image, 'base64'))) AS competitors,
@@ -267,18 +181,13 @@ router.get("/:pollId/results", async (req, res) => {
       title: pollData.title,
       category: pollData.category,
       presidential: pollData.presidential,
-      region: pollData.region,
-      county: pollData.county,
-      constituency: pollData.constituency,
-      ward: pollData.ward,
-      createdAt: pollData.created_at,
-      voting_expires_at: pollData.voting_expires_at,
-      competitors: formattedCompetitors,
+       createdAt: pollData.created_at,
+        competitors: formattedCompetitors,
       questions: formattedQuestions,
     };
 
-    const responsesResult = await client.query(
-      `SELECT user_identifier, question_id, selected_competitor_id, selected_option_id, open_ended_response, respondent_gender, respondent_age
+    const responsesResult = await pool.query(
+      `SELECT user_identifier, selected_competitor_ids, selected_option_ids, open_ended_response, respondent_gender, respondent_age,ward, constituency, county, region
        FROM poll_responses
        WHERE poll_id = $1`,
       [pollId]
@@ -288,103 +197,107 @@ router.get("/:pollId/results", async (req, res) => {
 
     const aggregatedResponses: AggregatedResponse[] = [];
 
-    for (const question of formattedPollData.questions) {
-// Filter responses for the current question, ensuring type consistency
-const questionResponses = allResponses.filter(
-  (r: any) => Number(r.question_id) === Number(question.id)
-);
 
-// Count unique respondents by converting identifiers to strings
-const uniqueRespondents = new Set(
-  questionResponses.map((r: any) => String(r.user_identifier))
-).size;
+for (const question of formattedPollData.questions) {
 
-      const aggregatedQuestion: AggregatedResponse = {
-        questionId: question.id,
-        questionText: question.questionText,
-        type: question.type,
-        isCompetitorQuestion: question.isCompetitorQuestion,
-        totalResponses: uniqueRespondents,
-      };
+  const isCompetitor = question.isCompetitorQuestion === true;
 
-      if (question.type === "open-ended") {
-        aggregatedQuestion.openEndedResponses = questionResponses
-          .map((r: any) => r.open_ended_response)
-          .filter(Boolean);
-      } else {
-        // build counts
-        const optionCounts = new Map<number, number>();
-        const competitorCounts = new Map<number, number>();
+  // Initialize counters
+  const optionCounts = new Map<number, number>();
+  const competitorCounts = new Map<number, number>();
+  const openEnded: string[] = [];
 
-        questionResponses.forEach((r: any) => {
-          if (r.selected_option_id !== null && r.selected_option_id !== undefined) {
-            const id = Number(r.selected_option_id);
-            optionCounts.set(id, (optionCounts.get(id) || 0) + 1);
-          }
-          if (r.selected_competitor_id !== null && r.selected_competitor_id !== undefined) {
-            const id = Number(r.selected_competitor_id);
-            competitorCounts.set(id, (competitorCounts.get(id) || 0) + 1);
-          }
-        });
+  let respondentSet = new Set<string>();
 
-        // ----- OPTIONS (single / multi / yes-no) -----
-        if (optionCounts.size > 0) {
-      
-if (question.type === "multi-choice") {
-  const totalSelections = Array.from(optionCounts.values()).reduce((a, b) => a + b, 0);
+  for (const r of allResponses) {
+    const user = String(r.user_identifier);
 
-  aggregatedQuestion.choices = Array.from(optionCounts.entries()).map(([id, count]) => {
-    const option = question.options?.find((opt: Option) => opt.id === id);
-    return {
-      id,
-      label: option ? option.optionText : `Option ${id}`,
-      count,
-      percentage: totalSelections > 0 ? (count / totalSelections) * 100 : 0,
-    };
-  });
+    // 🌟 Count respondent if they answered anything in this question
+    let answered = false;
 
-  aggregatedQuestion.totalSelections = totalSelections;
-}
- else {
-            // single-choice or yes-no-notsure => percent of unique respondents
-            aggregatedQuestion.choices = Array.from(optionCounts.entries()).map(([id, count]) => {
-              const option = question.options?.find((opt: Option) => opt.id === id);
-              const percentage = uniqueRespondents > 0 ? (count / uniqueRespondents) * 100 : 0;
-              return {
-                id,
-                label: option ? option.optionText : `Option ${id}`,
-                count,
-                percentage: Number(percentage.toFixed(2)),
-              };
-            }).sort((a, b) => b.count - a.count);
-          }
-        }
-
-        // ----- COMPETITOR QUESTIONS -----
-        if (competitorCounts.size > 0) {
-          // Decide denominator: if competitorSelections > uniqueRespondents treat like multi-select; otherwise treat like single-select (per-user)
-          const totalCompetitorSelections = Array.from(competitorCounts.values()).reduce((a, b) => a + b, 0);
-          const useSelectionsAsDenominator = totalCompetitorSelections > uniqueRespondents;
-
-          aggregatedQuestion.choices = Array.from(competitorCounts.entries()).map(([id, count]) => {
-            const competitor = formattedPollData.competitors.find((c: Competitor) => c.id === id);
-            const label = competitor ? competitor.name : `Competitor ${id}`;
-            const denom = useSelectionsAsDenominator ? totalCompetitorSelections : uniqueRespondents;
-            const percentage = denom > 0 ? (count / denom) * 100 : 0;
-            return {
-              id,
-              label,
-              count,
-              percentage: Number(percentage.toFixed(2)),
-            };
-          }).sort((a, b) => b.count - a.count);
+    // If competitor question
+    if (isCompetitor && r.selected_competitor_ids) {
+      for (const id of r.selected_competitor_ids) {
+        const competitorMatch = formattedPollData.competitors.find(c => c.id === id);
+        if (competitorMatch) {
+          competitorCounts.set(id, (competitorCounts.get(id) || 0) + 1);
+          answered = true;
         }
       }
-
-      aggregatedResponses.push(aggregatedQuestion);
     }
 
-    // overall demographics (across poll)
+    // If option-based question
+    if (!isCompetitor && r.selected_option_ids) {
+
+      // Check only options belonging to this question
+      for (const id of r.selected_option_ids) {
+        const match = question.options?.find(o => o.id === id);
+        if (match) {
+          optionCounts.set(id, (optionCounts.get(id) || 0) + 1);
+          answered = true;
+        }
+      }
+    }
+
+    // Open ended
+    if (question.type === "open-ended" && r.open_ended_response) {
+      openEnded.push(r.open_ended_response);
+      answered = true;
+    }
+
+    if (answered) respondentSet.add(user);
+  }
+
+  const unique = respondentSet.size;
+
+  const aggregated: AggregatedResponse = {
+    questionId: question.id,
+    questionText: question.questionText,
+    type: question.type,
+    isCompetitorQuestion: isCompetitor,
+    totalResponses: unique,
+  };
+
+  // Save options
+  if (optionCounts.size > 0) {
+    const totalSelections = Array.from(optionCounts.values()).reduce((a, b) => a + b, 0);
+
+    aggregated.choices = Array.from(optionCounts.entries()).map(([id, count]) => {
+      const label = question.options?.find(o => o.id === id)?.optionText ?? `Option ${id}`;
+      return {
+        id,
+        label,
+        count,
+        percentage: totalSelections > 0 ? (count / totalSelections) * 100 : 0,
+      };
+    });
+
+    aggregated.totalSelections = totalSelections;
+  }
+
+  // Save competitor responses
+  if (competitorCounts.size > 0) {
+    const totalSelections = Array.from(competitorCounts.values()).reduce((a, b) => a + b, 0);
+
+    aggregated.choices = Array.from(competitorCounts.entries()).map(([id, count]) => {
+      const comp = formattedPollData.competitors.find(c => c.id === id);
+      return {
+        id,
+        label: comp ? comp.name : `Competitor ${id}`,
+        count,
+        percentage: totalSelections > 0 ? (count / totalSelections) * 100 : 0,
+      };
+    });
+  }
+
+  // Save open ended
+  if (question.type === "open-ended") {
+    aggregated.openEndedResponses = openEnded;
+  }
+
+  aggregatedResponses.push(aggregated);
+}
+
     const totalRespondents = new Set(allResponses.map((r: any) => r.user_identifier)).size;
     const genderCounts = new Map<string, number>();
     const ageCounts = new Map<string, number>();
@@ -425,20 +338,32 @@ if (question.type === "multi-choice") {
       }),
       totalRespondents,
     };
+// Extract unique location entries
+const uniqueLocations = Array.from(
+  new Set(
+    allResponses.map(
+      (r: any) =>
+        JSON.stringify({
+          region: r.region,
+          county: r.county,
+          constituency: r.constituency,
+          ward: r.ward,
+        })
+    )
+  )
+).map((loc) => JSON.parse(loc));
 
     res.status(200).json({
       poll: formattedPollData,
       aggregatedResponses,
       demographics,
-
+  location: uniqueLocations,
     });
 
   } catch (error) {
     console.error("Error fetching poll results:", error);
     res.status(500).json({ message: "Internal server error while fetching poll results." });
-  } finally {
-    if (client) client.release();
-  }
+  } 
 });
 
 export default router;
