@@ -365,5 +365,33 @@ const uniqueLocations = Array.from(
     res.status(500).json({ message: "Internal server error while fetching poll results." });
   } 
 });
+router.delete("/:id", async (req, res) => {
+  const pollId = parseInt(req.params.id);
+  if (isNaN(pollId)) {
+    return res.status(400).json({ message: "Invalid poll ID." });
+  }
 
+  try {
+   const pollCheck = await pool.query(
+      "SELECT id FROM polls WHERE id = $1",
+      [pollId]
+    );
+   if (pollCheck.rows.length === 0) {
+      await pool.query("ROLLBACK");
+      return res.status(404).json({ message: "Poll not found." });
+    }
+    await pool.query(
+      "DELETE FROM poll_competitors WHERE poll_id = $1",
+      [pollId]
+    );
+
+    // Delete the poll (cascades everything: questions, options, responses)
+    await pool.query("DELETE FROM polls WHERE id = $1", [pollId]);
+
+    return res.status(200).json({ message: "Poll deleted successfully." });
+  } catch (err) {
+    console.error("Error deleting poll:", err);
+    return res.status(500).json({ message: "Server error." });
+  }
+});
 export default router;
