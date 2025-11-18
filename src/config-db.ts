@@ -96,7 +96,7 @@ const createTables = async () => {
     user_identifier TEXT NOT NULL, 
     selected_option_ids INT[],
     selected_competitor_ids INT[],
-    open_ended_response TEXT,
+    open_ended_responses jsonb[],
     voted_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 `,

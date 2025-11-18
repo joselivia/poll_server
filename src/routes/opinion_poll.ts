@@ -64,7 +64,7 @@ router.post("/:pollId/vote", async (req, res) => {
   }
   const selectedOptionIds: number[] = [];
   const selectedCompetitorIds: number[] = [];
-  let openEndedResponse: string | null = null;
+let openEndedResponses: { questionId: number; response: string }[] = [];
   for (const r of responses) {
     // Multi-choice or single-choice
     if (r.selectedOptionIds) {
@@ -86,16 +86,20 @@ router.post("/:pollId/vote", async (req, res) => {
 
     // Open-ended (store the LAST one)
     if (r.openEndedResponse) {
-      openEndedResponse = r.openEndedResponse;
+openEndedResponses.push({
+  questionId: r.questionId,
+  response: r.openEndedResponse
+});
+
     }
   }
   try {
-
+const openEndedResponsesJson = openEndedResponses;
 await pool.query(`
   INSERT INTO poll_responses (
     poll_id, user_identifier,
     selected_option_ids, selected_competitor_ids,
-    open_ended_response,
+    open_ended_responses,
     respondent_name, respondent_age, respondent_gender,
     region, county, constituency, ward
   )
@@ -105,7 +109,7 @@ await pool.query(`
   userIdentifier,                       
   selectedOptionIds.length > 0 ? selectedOptionIds : null,  
   selectedCompetitorIds.length > 0 ? selectedCompetitorIds : null, 
-  openEndedResponse,                    
+  openEndedResponsesJson,                    
   respondentName,                      
   respondentAge,                        
   respondentGender,                     
@@ -124,11 +128,35 @@ await pool.query(`
 
 router.get("/:pollId/results", async (req, res) => {
   const pollId = parseInt(req.params.pollId);
-
-
   if (isNaN(pollId)) {
     return res.status(400).json({ message: "Invalid poll ID." });
   }
+
+// Extract filters from query
+let { county, constituency, ward } = req.query;
+if (Array.isArray(county)) county = county[0];
+if (Array.isArray(constituency)) constituency = constituency[0];
+if (Array.isArray(ward)) ward = ward[0];
+
+let filterQuery = `WHERE poll_id = $1`;
+let params: (string | number)[] = [pollId];
+let index = 2;
+
+if (county) {
+  filterQuery += ` AND county = $${index++}`;
+  params.push(String(county));
+}
+
+if (constituency) {
+  filterQuery += ` AND constituency = $${index++}`;
+  params.push(String(constituency));
+}
+
+if (ward) {
+  filterQuery += ` AND ward = $${index++}`;
+  params.push(String(ward));
+}
+
 
   try {
     const pollResult = await pool.query(
@@ -185,12 +213,19 @@ router.get("/:pollId/results", async (req, res) => {
         competitors: formattedCompetitors,
       questions: formattedQuestions,
     };
+// Get ALL possible locations for this poll (unfiltered)
+const locationResult = await pool.query(
+  `SELECT DISTINCT region, county, constituency, ward
+   FROM poll_responses
+   WHERE poll_id = $1`,
+  [pollId]
+);
 
     const responsesResult = await pool.query(
-      `SELECT user_identifier, selected_competitor_ids, selected_option_ids, open_ended_response, respondent_gender, respondent_age,ward, constituency, county, region
+      `SELECT user_identifier, selected_competitor_ids, selected_option_ids, open_ended_responses, respondent_gender, respondent_age,ward, constituency, county, region
        FROM poll_responses
-       WHERE poll_id = $1`,
-      [pollId]
+       ${filterQuery}`,
+      params
     );
 
     const allResponses = responsesResult.rows; 
@@ -240,10 +275,14 @@ for (const question of formattedPollData.questions) {
     }
 
     // Open ended
-    if (question.type === "open-ended" && r.open_ended_response) {
-      openEnded.push(r.open_ended_response);
-      answered = true;
+  if (question.type === "open-ended" && Array.isArray(r.open_ended_responses)) {
+    const match = r.open_ended_responses.find((a: any) => a.questionId === question.id);
+    if (match?.response) {
+      openEnded.push(match.response);
+      answered = true; // ensure respondent count increments
     }
+  }
+
 
     if (answered) respondentSet.add(user);
   }
@@ -338,26 +377,12 @@ for (const question of formattedPollData.questions) {
       }),
       totalRespondents,
     };
-// Extract unique location entries
-const uniqueLocations = Array.from(
-  new Set(
-    allResponses.map(
-      (r: any) =>
-        JSON.stringify({
-          region: r.region,
-          county: r.county,
-          constituency: r.constituency,
-          ward: r.ward,
-        })
-    )
-  )
-).map((loc) => JSON.parse(loc));
 
     res.status(200).json({
       poll: formattedPollData,
       aggregatedResponses,
       demographics,
-  location: uniqueLocations,
+  location: locationResult.rows,
     });
 
   } catch (error) {
