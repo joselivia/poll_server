@@ -193,40 +193,70 @@ router.put("/:id", upload.any(), async (req, res) => {
       await pool.query("ROLLBACK");
         return res.status(404).json({ message: "Poll not found." });
     }
-    let competitors: any[] = [];
-    if (Array.isArray(req.body.competitors)) {
-      interface CompetitorInput {
-        id: string;
-        name: string;
-        party: string;
-        profile: string;
-      }
+ let competitors: any[] = [];
 
-      interface CompetitorParsed {
-        id: number | null;
-        name: string;
-        party: string;
-        file: Express.Multer.File | null;
-      }
+if (Array.isArray(req.body.competitors)) {
 
-            competitors = (req.body.competitors as CompetitorInput[]).map(
-              (comp: CompetitorInput, idx: number): CompetitorParsed => {
-                const file: Express.Multer.File | null =
-                  (req.files as Express.Multer.File[])?.find(
-                    (f: Express.Multer.File) => f.fieldname === `competitors[${idx}][profile]`
-                  ) || null;
+  interface CompetitorInput {
+    id: string;
+    name: string;
+    party: string;
+    profile: string;
+  }
 
-                return {
-                  id: comp.id && comp.id !== "" ? parseInt(comp.id) : null,
-                  name: comp.name?.trim() || "",
-                  party: comp.party || "",
-                  file,
-                };
-              }
-            );
-    } else {
-      console.warn("⚠️ No competitors found in request body");
+  interface CompetitorParsed {
+    id: number | null;
+    name: string;
+    party: string;
+    file: Express.Multer.File | null;
+  }
+
+  competitors = (req.body.competitors as CompetitorInput[]).map(
+    (comp: CompetitorInput, idx: number): CompetitorParsed => {
+      const file =
+        (req.files as Express.Multer.File[])?.find(
+          (f) => f.fieldname === `competitors[${idx}][profile]`
+        ) || null;
+
+      return {
+        id: comp.id ? parseInt(comp.id) : null,
+        name: comp.name?.trim() || "",
+        party: comp.party || "",
+        file,
+      };
     }
+  );
+  const existing = await pool.query(
+    "SELECT id FROM poll_competitors WHERE poll_id = $1",
+    [pollId]
+  );
+
+  const existingIds = existing.rows.map((r) => r.id);
+
+  const incomingIds = competitors
+    .filter((c) => c.id !== null)
+    .map((c) => c.id);
+
+  const toDelete = existingIds.filter((id) => !incomingIds.includes(id));
+  if (toDelete.length > 0) {
+    await pool.query(
+      `DELETE FROM poll_competitors 
+       WHERE poll_id = $1 AND id = ANY($2::int[])`,
+      [pollId, toDelete]
+    );
+    await pool.query(
+  `UPDATE polls
+   SET total_votes = (
+     SELECT COUNT(*) FROM votes WHERE poll_id = $1
+   )
+   WHERE id = $1`,
+  [pollId]
+);
+  }
+} else {
+  console.warn("⚠️ No competitors found in request body");
+}
+
     for (const comp of competitors) {
       if (!comp.name) {
         await pool.query("ROLLBACK");
