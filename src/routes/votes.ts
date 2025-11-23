@@ -158,35 +158,62 @@ router.get("/:id/questions", async (req, res) => {
   }
 });
 router.get("/status", async (req, res) => {
-  const { pollId, voter_id } = req.query;
-
-  const pollSettings = await pool.query(
-    `SELECT allow_multiple_votes FROM polls WHERE id = $1`,
-    [pollId]
-  );
-
-  const allowMultiple = pollSettings.rows[0]?.allow_multiple_votes;
-
-  // If poll allows multiple votes → always return false
-  if (allowMultiple) {
-    return res.json({ alreadyVoted: false });
-  }
-
-  let check;
   try {
-    check = await pool.query(
-      `SELECT 1 FROM votes WHERE poll_id = $1 AND voter_id = $2`,
+    const { pollId, voter_id } = req.query;
+
+    // Validate inputs
+    if (!pollId || !voter_id) {
+      return res.status(400).json({
+        success: false,
+        message: "pollId and voter_id are required",
+      });
+    }
+
+    // 1. Get poll settings
+    const pollSettings = await pool.query(
+      "SELECT allow_multiple_votes FROM polls WHERE id = $1",
+      [pollId]
+    );
+
+    if (pollSettings.rowCount === 0) {
+      return res.status(404).json({
+        success: false,
+        message: "Poll not found",
+      });
+    }
+
+    const allowMultiple = pollSettings.rows[0].allow_multiple_votes;
+
+    // If multiple votes allowed → automatically false
+    if (allowMultiple) {
+      return res.json({
+        success: true,
+        alreadyVoted: false,
+      });
+    }
+
+    // 2. Check if user has voted
+    const check = await pool.query(
+      "SELECT 1 FROM votes WHERE poll_id = $1 AND voter_id = $2",
       [pollId, voter_id]
     );
-  } catch (err) {
-    console.error("Vote status check error:", err);
-    return res.json({ alreadyVoted: false });
-  }
 
-  return res.json({
-    alreadyVoted: (check?.rowCount ?? 0) > 0,
-  });
+    const alreadyVoted = (check.rowCount ?? 0) > 0;
+
+    return res.json({
+      success: true,
+      alreadyVoted,
+    });
+  } catch (error) {
+    console.error("Error checking vote status:", error);
+
+    return res.status(500).json({
+      success: false,
+      message: "Internal server error",
+    });
+  }
 });
+
 
 
 router.patch("/:id/allow-multiple", async (req, res) => {
