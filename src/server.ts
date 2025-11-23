@@ -16,15 +16,8 @@ dotenv.config();
 const app = express();
 const port = process.env.PORT || 8082;
 app.use(cors());
-app.use(express.urlencoded({ extended: true }));
 app.use(express.json());
 
-app.use((req, res, next) => {
-  console.log(
-    `➡️ ${req.method} ${req.url} | Content-Type: ${req.headers["content-type"]}`
-  );
-  next();
-});
 app.use("/api/polls", pollRoutes);
 app.use("/api/blogs", postRoutes);
 app.use("/api/login", login);
@@ -45,7 +38,6 @@ app.use((err: any, req: any, res: any, next: any) => {
   console.error("🔥 GLOBAL ERROR CAUGHT:", err.message);
   console.error(err.stack);
 
-  // Prevent server crash — return safe output
   res.status(500).json({
     success: false,
     message: "Internal Server Error",

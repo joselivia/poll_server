@@ -138,7 +138,6 @@ router.get("/:pollId/strongholds/:competitorId", async (req, res) => {
 
 router.get("/:id/questions", async (req, res) => {
   const pollId = parseInt(req.params.id);
-
   if (isNaN(pollId)) {
     return res.status(400).json({ message: "Invalid poll ID." });
   }
@@ -161,23 +160,35 @@ router.get("/:id/questions", async (req, res) => {
 router.get("/status", async (req, res) => {
   const { pollId, voter_id } = req.query;
 
-  if (!pollId || !voter_id) {
-    return res.status(400).json({ message: "Missing pollId or voter_id" });
+  const pollSettings = await pool.query(
+    `SELECT allow_multiple_votes FROM polls WHERE id = $1`,
+    [pollId]
+  );
+
+  const allowMultiple = pollSettings.rows[0]?.allow_multiple_votes;
+
+  // If poll allows multiple votes → always return false
+  if (allowMultiple) {
+    return res.json({ alreadyVoted: false });
   }
 
+  let check;
   try {
-    const result = await pool.query(
+    check = await pool.query(
       `SELECT 1 FROM votes WHERE poll_id = $1 AND voter_id = $2`,
       [pollId, voter_id]
     );
-
-const alreadyVoted = result.rowCount !== null && result.rowCount > 0;
-    return res.json({ alreadyVoted });
   } catch (err) {
     console.error("Vote status check error:", err);
-    return res.status(500).json({ message: "Server error checking vote status." });
+    return res.json({ alreadyVoted: false });
   }
+
+  return res.json({
+    alreadyVoted: (check?.rowCount ?? 0) > 0,
+  });
 });
+
+
 router.patch("/:id/allow-multiple", async (req, res) => {
   const pollId = parseInt(req.params.id);
   const { allow_multiple_votes } = req.body;
