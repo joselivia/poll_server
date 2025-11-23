@@ -17,61 +17,42 @@ router.post("/", async (req, res) => {
 
   if (!pollId || !competitorId || !voter_id) {
     return res.status(400).json({ message: "Missing pollId, competitorId, or voter_id." });
-  }
-
-  const client = await pool.connect();
+  }  const client = await pool.connect();
   try {
     await client.query("BEGIN");
 
-    // 1️⃣ Check poll settings
-    const pollSettings = await client.query(
-      `SELECT allow_multiple_votes FROM polls WHERE id = $1`,
-      [pollId]
-    );
-
-  const allowMultiple = pollSettings.rows[0]?.allow_multiple_votes;
-  if (!allowMultiple) {
-    const alreadyVoted = await client.query(
+    // Check if voter already voted
+    const existingVote = await client.query(
       `SELECT 1 FROM votes WHERE poll_id = $1 AND voter_id = $2`,
       [pollId, voter_id]
     );
 
-    if (alreadyVoted?.rowCount && alreadyVoted.rowCount > 0) {
+    if (existingVote.rowCount?? 0) {
       await client.query("ROLLBACK");
       return res.status(403).json({ message: "You have already voted in this poll." });
     }
-  }
 
-    const check = await client.query(
-    `SELECT id FROM poll_competitors WHERE id = $1 AND poll_id = $2`,
-    [competitorId, pollId]
-  );
+    // Check competitor belongs to poll
+    const checkCompetitor = await client.query(
+      `SELECT id FROM poll_competitors WHERE id = $1 AND poll_id = $2`,
+      [competitorId, pollId]
+    );
 
-  if (check.rowCount === 0) {
-    await client.query("ROLLBACK");
-    return res.status(400).json({ message: "Competitor does not belong to the poll." });
-  }
+    if (checkCompetitor.rowCount === 0) {
+      await client.query("ROLLBACK");
+      return res.status(400).json({ message: "Competitor does not belong to this poll." });
+    }
+
+    // Insert vote
     await client.query(
       `INSERT INTO votes (
         poll_id, competitor_id, voter_id, name, gender, region, county, constituency, ward
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
       [pollId, competitorId, voter_id, name, gender, region, county, constituency, ward]
     );
 
-    // 4️⃣ Increment total votes
+    // Increment total votes in polls table
     await client.query(`UPDATE polls SET total_votes = total_votes + 1 WHERE id = $1`, [pollId]);
-
-const results= await client.query(
-  `SELECT COUNT(*) AS total_votes FROM votes WHERE poll_id = $1 AND competitor_id = $2`,
-  [pollId, competitorId]
-);
-
-const newVoteCount =parseInt(results.rows[0].total_votes, 10);
-await pool.query(
-  `INSERT INTO vote_history (poll_id, competitor_id, vote_count)
-   VALUES ($1, $2, $3)`,
-  [pollId, competitorId, newVoteCount]
-);
 
     await client.query("COMMIT");
     return res.status(200).json({ message: "Vote recorded successfully!" });
@@ -161,56 +142,19 @@ router.get("/status", async (req, res) => {
   try {
     const { pollId, voter_id } = req.query;
 
-    // Validate inputs
     if (!pollId || !voter_id) {
-      return res.status(400).json({
-        success: false,
-        message: "pollId and voter_id are required",
-      });
+      return res.status(400).json({ success: false, message: "pollId and voter_id required" });
     }
 
-    // 1. Get poll settings
-    const pollSettings = await pool.query(
-      "SELECT allow_multiple_votes FROM polls WHERE id = $1",
-      [pollId]
-    );
-
-    if (pollSettings.rowCount === 0) {
-      return res.status(404).json({
-        success: false,
-        message: "Poll not found",
-      });
-    }
-
-    const allowMultiple = pollSettings.rows[0].allow_multiple_votes;
-
-    // If multiple votes allowed → automatically false
-    if (allowMultiple) {
-      return res.json({
-        success: true,
-        alreadyVoted: false,
-      });
-    }
-
-    // 2. Check if user has voted
     const check = await pool.query(
       "SELECT 1 FROM votes WHERE poll_id = $1 AND voter_id = $2",
       [pollId, voter_id]
     );
 
-    const alreadyVoted = (check.rowCount ?? 0) > 0;
-
-    return res.json({
-      success: true,
-      alreadyVoted,
-    });
-  } catch (error) {
-    console.error("Error checking vote status:", error);
-
-    return res.status(500).json({
-      success: false,
-      message: "Internal server error",
-    });
+    return res.json({ success: true, alreadyVoted: check.rowCount?? 0 });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ success: false, message: "Server error" });
   }
 });
 
