@@ -260,8 +260,6 @@ for (const question of formattedPollData.questions) {
         }
       }
     }
-
-    // If option-based question
     if (!isCompetitor && r.selected_option_ids) {
 
       // Check only options belonging to this question
@@ -336,7 +334,6 @@ for (const question of formattedPollData.questions) {
 
   aggregatedResponses.push(aggregated);
 }
-
     const totalRespondents = new Set(allResponses.map((r: any) => r.user_identifier)).size;
     const genderCounts = new Map<string, number>();
     const ageCounts = new Map<string, number>();
@@ -419,4 +416,41 @@ router.delete("/:id", async (req, res) => {
     return res.status(500).json({ message: "Server error." });
   }
 });
+// router.put("/:id/publish", async (req, res) => {
+//   const { id } = req.params;
+//   const { published } = req.body; 
+//   try {
+//     const result = await pool.query(
+//       "UPDATE polls SET published = $1 WHERE id = $2 RETURNING *",
+//       [published, id]
+//     );
+
+//     if (result.rowCount === 0) {
+//       return res.status(404).json({ message: "Poll not found" });
+//     }
+
+//     res.json(result.rows[0]);
+//   } catch (error) {
+//     console.error("Error updating publish status:", error);
+//     res.status(500).json({ message: "Failed to update publish status" });
+//   }
+// });
+// router.get("/published", async (req, res) => {
+  
+//   try {
+//     const result = await pool.query(
+//       `SELECT 
+//   published, 
+//   voting_expires_at, 
+//   created_at
+// FROM 
+// WHERE published = true
+// ORDER BY created_at DESC
+//     `
+//     );
+//     res.json(result.rows);
+//   } catch (err) {
+//     res.status(500).json({ message: "Failed to fetch published polls" });
+//   }
+// });
 export default router;

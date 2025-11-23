@@ -57,6 +57,7 @@ const createTables = async () => {
       poll_id INT REFERENCES polls(id) ON DELETE CASCADE,
       type TEXT NOT NULL,
       is_competitor_question BOOLEAN DEFAULT false,
+      published BOOLEAN DEFAULT false, 
       question_text TEXT NOT NULL
     );`,
 
