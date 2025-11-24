@@ -2,12 +2,13 @@ import express from "express";
 import { pool } from "../config-db";
 import rateLimit from "express-rate-limit";
 const router = express.Router();
+
 const voteLimiter = rateLimit({
   windowMs: 1000, 
   max: 1, 
   message: "Too many requests from this IP, slow down."
 });
-router.post("/", voteLimiter, async (req, res) => {
+router.post("/",voteLimiter, async (req, res) => {
   const {
     id: pollId,
     competitorId,
@@ -28,79 +29,67 @@ router.post("/", voteLimiter, async (req, res) => {
   try {
     await client.query("BEGIN");
 
-    // ✅ 1. Check if poll is active
-    const pollCheck = await client.query(
-      "SELECT voting_expires_at, allow_multiple_votes FROM polls WHERE id=$1",
+    // 1️⃣ Check poll settings
+    const pollSettings = await client.query(
+      `SELECT allow_multiple_votes FROM polls WHERE id = $1`,
       [pollId]
     );
 
-    if (!pollCheck.rows[0]) {
-      await client.query("ROLLBACK");
-      return res.status(404).json({ message: "Poll not found." });
-    }
-
-    if (!pollCheck.rows[0].is_active) {
-      await client.query("ROLLBACK");
-      return res.status(410).json({ message: "Voting is closed for this poll." });
-    }
-
-    const allowMultiple = pollCheck.rows[0].allow_multiple_votes;
-
-    // 2. Check if voter already voted
-    if (!allowMultiple) {
-      const alreadyVoted = await client.query(
-        `SELECT 1 FROM votes WHERE poll_id = $1 AND voter_id = $2`,
-        [pollId, voter_id]
-      );
-
-      if (alreadyVoted?.rowCount ?? 0> 0) {
-        await client.query("ROLLBACK");
-        return res.status(403).json({ message: "You have already voted in this poll." });
-      }
-    }
-
-    // 3. Check if competitor belongs to the poll
-    const check = await client.query(
-      `SELECT id FROM poll_competitors WHERE id = $1 AND poll_id = $2`,
-      [competitorId, pollId]
+  const allowMultiple = pollSettings.rows[0]?.allow_multiple_votes;
+  if (!allowMultiple) {
+    const alreadyVoted = await client.query(
+      `SELECT 1 FROM votes WHERE poll_id = $1 AND voter_id = $2`,
+      [pollId, voter_id]
     );
 
-    if (check.rowCount === 0) {
+    if (alreadyVoted?.rowCount && alreadyVoted.rowCount > 0) {
       await client.query("ROLLBACK");
-      return res.status(400).json({ message: "Competitor does not belong to the poll." });
+      return res.status(403).json({ message: "You have already voted in this poll." });
     }
+  }
 
-    // 4. Insert vote
-    const insertResult = await client.query(
+    const check = await client.query(
+    `SELECT id FROM poll_competitors WHERE id = $1 AND poll_id = $2`,
+    [competitorId, pollId]
+  );
+
+  if (check.rowCount === 0) {
+    await client.query("ROLLBACK");
+    return res.status(400).json({ message: "Competitor does not belong to the poll." });
+  }
+  try {
+     await client.query(
       `INSERT INTO votes (
         poll_id, competitor_id, voter_id, name, gender, region, county, constituency, ward
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-      ON CONFLICT (poll_id,voter_id) DO NOTHING`,
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)ON CONFLICT (poll_id,voter_id) DO NOTHING`,
       [pollId, competitorId, voter_id, name, gender, region, county, constituency, ward]
     );
+  }catch (err: any) {
+  if (err.code === "23505") { 
+    return res.status(403).json({ message: "You have already voted." });
+  }
+  throw err;
+}
+   
 
-    if (insertResult.rowCount === 0) {
-      await client.query("ROLLBACK");
-      return res.status(403).json({ message: "You have already voted." });
-    }
-
-    // 5. Increment total votes
+    // 4️⃣ Increment total votes
     await client.query(`UPDATE polls SET total_votes = total_votes + 1 WHERE id = $1`, [pollId]);
 
-    const results = await client.query(
-      `SELECT COUNT(*) AS total_votes FROM votes WHERE poll_id = $1 AND competitor_id = $2`,
-      [pollId, competitorId]
-    );
+const results= await client.query(
+  `SELECT COUNT(*) AS total_votes FROM votes WHERE poll_id = $1 AND competitor_id = $2`,
+  [pollId, competitorId]
+);
 
-    const newVoteCount = parseInt(results.rows[0].total_votes, 10);
-    await client.query(
-      `INSERT INTO vote_history (poll_id, competitor_id, vote_count)
-       VALUES ($1, $2, $3)`,
-      [pollId, competitorId, newVoteCount]
-    );
+const newVoteCount =parseInt(results.rows[0].total_votes, 10);
+await pool.query(
+  `INSERT INTO vote_history (poll_id, competitor_id, vote_count)
+   VALUES ($1, $2, $3)`,
+  [pollId, competitorId, newVoteCount]
+);
 
     await client.query("COMMIT");
     return res.status(200).json({ message: "Vote recorded successfully!" });
+
   } catch (error) {
     await client.query("ROLLBACK");
     console.error("Vote Error:", error);
@@ -108,8 +97,7 @@ router.post("/", voteLimiter, async (req, res) => {
   } finally {
     client.release();
   }
-});
-
+}); 
 
 router.patch("/:id/allow-multiple", async (req, res) => {
   const pollId = parseInt(req.params.id);
