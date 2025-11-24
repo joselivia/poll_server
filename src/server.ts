@@ -14,6 +14,7 @@ import opinionsPolls from "./routes/opinion_poll";
 dotenv.config();
 
 const app = express();
+app.set('trust proxy', 1);
 const port = process.env.PORT || 8082;
 app.use(cors());
 app.use(express.json());
