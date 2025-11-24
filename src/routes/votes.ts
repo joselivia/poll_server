@@ -30,7 +30,7 @@ router.post("/", voteLimiter, async (req, res) => {
 
     // ✅ 1. Check if poll is active
     const pollCheck = await client.query(
-      "SELECT is_active, allow_multiple_votes FROM polls WHERE id=$1",
+      "SELECT voting_expires_at, allow_multiple_votes FROM polls WHERE id=$1",
       [pollId]
     );
 
