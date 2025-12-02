@@ -98,6 +98,7 @@ const createTables = async () => {
     selected_option_ids INT[],
     selected_competitor_ids INT[],
     open_ended_responses jsonb[],
+    rating jsonb[],
     voted_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 `,

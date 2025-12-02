@@ -176,7 +176,7 @@ router.post("/", voteLimiter, async (req, res) => {
       if (err.code === "23505") {
         // duplicate vote detected
         await pool.query("ROLLBACK");
-        console.warn("Duplicate vote detected:", err.detail);
+        //console.warn("Duplicate vote detected:", err.detail);
         return res
           .status(403)
           .json({ message: "You have already voted in this poll." });

@@ -42,9 +42,6 @@ router.post("/", async (req, res) => {
     res.status(500).json({ message: "Server error during poll creation." });
   }
 });
-
-
-
 router.post("/createQuiz", upload.any(), async (req, res) => {
   const { pollId } = req.body;
 
@@ -106,6 +103,99 @@ router.post("/createQuiz", upload.any(), async (req, res) => {
     }
   }
 });
+router.put("/updateQuiz/:id", upload.any(), async (req, res) => {
+  const pollId = parseInt(req.params.id);
+  if (isNaN(pollId)) return res.status(400).json({ message: "Invalid poll ID" });
+
+  const client = await pool.connect();
+
+  try {
+    await client.query("BEGIN");
+    const pollQuestions = JSON.parse(req.body.PollQuestions || "[]");
+    const pollExists = await client.query(`SELECT id FROM polls WHERE id = $1`, [pollId]);
+    if (!pollExists.rows.length) {
+      await client.query("ROLLBACK");
+      return res.status(404).json({ message: "Poll not found." });
+    }
+
+    console.log("Updating quiz for poll:", pollId);
+    const existingQuestionsRes = await client.query(
+      `SELECT id FROM poll_questions WHERE poll_id = $1`,
+      [pollId]
+    );
+    const existingQuestionIds = existingQuestionsRes.rows.map(r => r.id);
+
+    for (const q of pollQuestions) {
+      const questionIdNum = q.id ? parseInt(q.id) : null;
+
+      if (questionIdNum && existingQuestionIds.includes(questionIdNum)) {
+        // Update existing question
+        await client.query(
+          `UPDATE poll_questions
+           SET type=$1, question_text=$2, is_competitor_question=$3
+           WHERE id=$4`,
+          [q.type, q.questionText, !!q.isCompetitorQuestion, questionIdNum]
+        );
+
+        // Remove old options
+        await client.query(`DELETE FROM poll_options WHERE question_id=$1`, [questionIdNum]);
+
+if (
+  q.type === "single-choice" ||
+  q.type === "multi-choice" ||
+  q.type === "yes-no-notsure" ||
+  q.type === "rate"
+) {
+  let optsToInsert: string[] = [];
+type Option = string | { optionText?: string; text?: string };
+
+if (Array.isArray(q.options) && q.options.length > 0) {
+  for (const opt of q.options as Option[]) {
+    const text = typeof opt === "string" ? opt : opt.optionText || opt.text || "";
+    await client.query(
+      `INSERT INTO poll_options (question_id, option_text) VALUES ($1,$2)`,
+      [questionIdNum, text]
+    );
+  }
+}
+
+}
+
+      } else {
+        // Insert new question
+        const insertQ = await client.query(
+          `INSERT INTO poll_questions (poll_id,type,question_text,is_competitor_question)
+           VALUES ($1,$2,$3,$4) RETURNING id`,
+          [pollId, q.type, q.questionText, !!q.isCompetitorQuestion]
+        );
+
+        const newQuestionId = insertQ.rows[0].id;
+
+        if (
+          (q.type === "single-choice" || q.type === "multi-choice" || q.type === "yes-no-notsure") &&
+          Array.isArray(q.options)
+        ) {
+          for (const opt of q.options) {
+            const text = typeof opt === "string" ? opt : opt.optionText || opt.text;
+            await client.query(
+              `INSERT INTO poll_options (question_id, option_text) VALUES ($1,$2)`,
+              [newQuestionId, text]
+            );
+          }
+        }
+      }
+    }
+
+    await client.query("COMMIT");
+    return res.status(200).json({ message: "Quiz updated successfully." });
+  } catch (err) {
+    console.error("Update quiz error:", err);
+    await client.query("ROLLBACK");
+    return res.status(500).json({ message: "Failed to update quiz." });
+  } finally {
+    client.release();
+  }
+});
 
 router.get("/", async (req, res) => {
   try {
@@ -125,9 +215,6 @@ router.get("/", async (req, res) => {
     res.status(500).json({ message: "Server error." });
   }
 });
-
-
-
 
 router.get("/:id", async (req, res) => {
   const pollId = parseInt(req.params.id);

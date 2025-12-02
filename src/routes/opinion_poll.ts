@@ -16,7 +16,7 @@ interface Option {
 
 interface Question {
   id: number;
-  type: 'multi-choice'| 'single-choice' | 'open-ended' | 'yes-no-notsure';
+  type: 'multi-choice'| 'single-choice' | 'open-ended' | 'yes-no-notsure' | 'rating';
   questionText: string;
   options?: Option[];
   isCompetitorQuestion?: boolean;
@@ -35,7 +35,7 @@ interface PollData {
 interface AggregatedResponse {
   questionId: number;
   questionText: string;
-  type: 'single-choice'| 'multi-choice' | 'open-ended' | 'yes-no-notsure';
+  type: 'single-choice'| 'multi-choice' | 'open-ended' | 'yes-no-notsure' | 'rating';
   isCompetitorQuestion?: boolean;
   totalResponses: number;
   choices?: {
@@ -46,6 +46,8 @@ interface AggregatedResponse {
   }[];
   openEndedResponses?: string[];
    totalSelections?: number; 
+  averageRating?: number; 
+  ratingValues?: number;
 }
 
 interface DemographicsData {
@@ -65,6 +67,8 @@ router.post("/:pollId/vote", async (req, res) => {
   const selectedOptionIds: number[] = [];
   const selectedCompetitorIds: number[] = [];
 let openEndedResponses: { questionId: number; response: string }[] = [];
+let ratingResponses: { questionId: number; rating: number }[] = [];
+
   for (const r of responses) {
     // Multi-choice or single-choice
     if (r.selectedOptionIds) {
@@ -92,6 +96,14 @@ openEndedResponses.push({
 });
 
     }
+
+if (r.rating ) {
+  ratingResponses.push({
+    questionId: r.questionId,
+    rating: r.rating
+  });
+}
+ 
   }
   try {
 const openEndedResponsesJson = openEndedResponses;
@@ -99,25 +111,27 @@ await pool.query(`
   INSERT INTO poll_responses (
     poll_id, user_identifier,
     selected_option_ids, selected_competitor_ids,
-    open_ended_responses,
+    open_ended_responses,rating,
     respondent_name, respondent_age, respondent_gender,
     region, county, constituency, ward
   )
-  VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+  VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
 `, [
-  pollId,                               
-  userIdentifier,                       
-  selectedOptionIds.length > 0 ? selectedOptionIds : null,  
-  selectedCompetitorIds.length > 0 ? selectedCompetitorIds : null, 
-  openEndedResponsesJson,                    
-  respondentName,                      
-  respondentAge,                        
-  respondentGender,                     
-  region,                            
-  county,                            
-  constituency,                      
-  ward                               
-]);
+  pollId,
+  userIdentifier,
+  selectedOptionIds.length > 0 ? selectedOptionIds : null,
+  selectedCompetitorIds.length > 0 ? selectedCompetitorIds : null,
+  openEndedResponsesJson ,
+  JSON.stringify(ratingResponses),
+  respondentName,
+  respondentAge,
+  respondentGender,
+  region,
+  county,
+  constituency,
+  ward
+]
+);
 
     res.status(201).json({ message: "Votes submitted successfully." });
   } catch (error: any) {
@@ -132,7 +146,6 @@ router.get("/:pollId/results", async (req, res) => {
     return res.status(400).json({ message: "Invalid poll ID." });
   }
 
-// Extract filters from query
 let { county, constituency, ward } = req.query;
 if (Array.isArray(county)) county = county[0];
 if (Array.isArray(constituency)) constituency = constituency[0];
@@ -202,6 +215,7 @@ if (ward) {
           questionText: q.questionText,
           options: q.options ? q.options.map((o: any) => ({ id: o.id, optionText: o.optionText })) : [],
           isCompetitorQuestion: q.isCompetitorQuestion === true,
+          scale: q.scale ?? 0,
         }));
 
     const formattedPollData: PollData = {
@@ -222,7 +236,7 @@ const locationResult = await pool.query(
 );
 
     const responsesResult = await pool.query(
-      `SELECT user_identifier, selected_competitor_ids, selected_option_ids, open_ended_responses, respondent_gender, respondent_age,ward, constituency, county, region
+      `SELECT user_identifier, selected_competitor_ids, selected_option_ids, open_ended_responses,rating, respondent_gender, respondent_age,ward, constituency, county, region
        FROM poll_responses
        ${filterQuery}`,
       params
@@ -241,6 +255,7 @@ for (const question of formattedPollData.questions) {
   const optionCounts = new Map<number, number>();
   const competitorCounts = new Map<number, number>();
   const openEnded: string[] = [];
+let ratingValues: number[] = [];
 
   let respondentSet = new Set<string>();
 
@@ -280,19 +295,25 @@ for (const question of formattedPollData.questions) {
       answered = true; // ensure respondent count increments
     }
   }
+// Ratings
+  if (question.type === "rating" && Array.isArray(r.rating)) {
+      const match = r.rating.find((v: any) => v.questionId === question.id);
+      if (match?.rating !== undefined && match.rating !== null) {
+        ratingValues.push(Number(match.rating));
+        answered = true;
+      }
+    }
 
 
     if (answered) respondentSet.add(user);
   }
-
-  const unique = respondentSet.size;
 
   const aggregated: AggregatedResponse = {
     questionId: question.id,
     questionText: question.questionText,
     type: question.type,
     isCompetitorQuestion: isCompetitor,
-    totalResponses: unique,
+    totalResponses: respondentSet.size,
   };
 
   // Save options
@@ -326,11 +347,19 @@ for (const question of formattedPollData.questions) {
       };
     });
   }
+  // Rating
+  if (question.type === "rating") {
+    const totalRatings = ratingValues.length;
+    const average = totalRatings > 0 ? ratingValues.reduce((a, b) => a + b, 0) / totalRatings : 0;
+    aggregated.averageRating = Number(average.toFixed(2));
 
+   // aggregated.scale = question.scale || 5; // default scale if missing
+  }
   // Save open ended
   if (question.type === "open-ended") {
     aggregated.openEndedResponses = openEnded;
   }
+
 
   aggregatedResponses.push(aggregated);
 }
@@ -416,6 +445,8 @@ router.delete("/:id", async (req, res) => {
     return res.status(500).json({ message: "Server error." });
   }
 });
+
+
 // router.put("/:id/publish", async (req, res) => {
 //   const { id } = req.params;
 //   const { published } = req.body; 
