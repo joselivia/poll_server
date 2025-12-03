@@ -4,7 +4,18 @@ import { pool } from "../config-db";
 
 const router = express.Router();
 const upload = multer({ storage: multer.memoryStorage() });
-
+interface PollOption {
+  id?: number ;
+  optionText?: string;
+  text?: string;
+}
+interface PollQuestion {
+  id?: number;
+  type: string;
+  questionText: string;
+  isCompetitorQuestion?: boolean;
+  options?: PollOption[];
+}
 router.post("/", async (req, res) => {
   const {
     title,
@@ -72,22 +83,30 @@ router.post("/createQuiz", upload.any(), async (req, res) => {
     }
 
     for (const q of dynamicPollQuestions) {
-      const { type, questionText, options, isCompetitorQuestion } = q;
+      const { type, questionText, options, isCompetitorQuestion,scale } = q;
       const questionInsert = await client.query(
         `INSERT INTO poll_questions (poll_id, type, question_text,is_competitor_question) VALUES ($1, $2, $3, $4) RETURNING id`,
         [pollId, type, questionText, isCompetitorQuestion === true]
       );
 
       const questionId = questionInsert.rows[0].id;
-      if (type === "single-choice" || type === "multi-choice" || type === "yes-no-notsure") {
-        for (const opt of options) {
+      if (type === "single-choice" || type === "multi-choice" || type === "yes-no-notsure" || type === "ranking") {
+       
+        for (const opt of options) {const optionText = typeof opt === "string" ? opt : opt.text;
           await client.query(
             `INSERT INTO poll_options (question_id, option_text) VALUES ($1, $2)`,
-            [questionId, opt]
+            [questionId, optionText]
           );
         }
       }
+            if (type === "rating") {
+        await client.query(
+          `INSERT INTO poll_options (question_id, option_text) VALUES ($1, $2)`,
+          [questionId, JSON.stringify({ scale: scale || 5 })]
+        );
+      }
     }
+    
 
     await client.query("COMMIT");
     res.status(201).json({ message: "Quiz details saved successfully for poll.", pollId: pollId });
@@ -109,15 +128,12 @@ router.put("/updateQuiz/:id", upload.any(), async (req, res) => {
     return res.status(400).json({ message: "Invalid poll ID" });
   }
 
-   try {
+  try {
     await pool.query("BEGIN");
 
-    const pollQuestions = JSON.parse(req.body.PollQuestions || "[]");
-    const pollExists = await pool.query(
-      `SELECT id FROM polls WHERE id = $1`,
-      [pollId]
-    );
+    const pollQuestions: PollQuestion[] = JSON.parse(req.body.PollQuestions || "[]");
 
+    const pollExists = await pool.query(`SELECT id FROM polls WHERE id = $1`, [pollId]);
     if (!pollExists.rows.length) {
       await pool.query("ROLLBACK");
       return res.status(404).json({ message: "Poll not found." });
@@ -129,16 +145,33 @@ router.put("/updateQuiz/:id", upload.any(), async (req, res) => {
     );
     const existingQuestionIds = existingQuestionsRes.rows.map((r) => r.id);
 
+    const incomingQuestionIds = pollQuestions.filter(q => q.id).map(q => (q.id));
+    const questionsToDelete = existingQuestionIds.filter(id => !incomingQuestionIds.includes(id));
+
+    for (const qid of questionsToDelete) {
+      await pool.query(`DELETE FROM poll_questions WHERE id = $1`, [qid]);
+    }
+
     for (const q of pollQuestions) {
-      const questionIdNum = q.id ? parseInt(q.id) : null;
-      const isExisting =
-        questionIdNum && existingQuestionIds.includes(questionIdNum);
+      const questionIdNum = q.id || null;
+      const isExisting = questionIdNum && existingQuestionIds.includes(questionIdNum);
 
       const isChoice =
         q.type === "single-choice" ||
         q.type === "multi-choice" ||
-        q.type === "yes-no-notsure" ||
-        q.type === "rate";
+        q.type === "rate" ||
+        q.type === "yes-no-notsure";
+
+      // FORCE DEFAULT OPTIONS FOR YES-NO-NOTSURE
+      let optionsToUse: string[] = [];
+
+      if (q.type === "yes-no-notsure") {
+        optionsToUse = ["Yes", "No", "Not Sure"];
+      } else {
+        optionsToUse = (q.options || []).map(opt =>
+          typeof opt === "string" ? opt : opt.optionText || opt.text || ""
+        );
+      }
 
       if (isExisting) {
         // --- UPDATE QUESTION ---
@@ -149,31 +182,16 @@ router.put("/updateQuiz/:id", upload.any(), async (req, res) => {
           [q.type, q.questionText, !!q.isCompetitorQuestion, questionIdNum]
         );
 
-        // --- UPDATE OPTIONS (safe for votes!) ---
         if (isChoice) {
+          // fetch existing
           const existingOptionsRes = await pool.query(
             `SELECT id, option_text FROM poll_options WHERE question_id = $1`,
             [questionIdNum]
           );
-
           const existingOptions = existingOptionsRes.rows;
 
-          for (const opt of q.options || []) {
-            const optionId = opt.id ? parseInt(opt.id) : null;
-            const text =
-              typeof opt === "string"
-                ? opt
-                : opt.optionText || opt.text || "";
-
-            if (optionId) {
-              await pool.query(
-                `UPDATE poll_options SET option_text=$1 WHERE id=$2 AND question_id=$3`,
-                [text, optionId, questionIdNum]
-              );
-              continue;
-            }
-
-           const match = existingOptions.find(
+          for (const text of optionsToUse) {
+            const match = existingOptions.find(
               (o) =>
                 o.option_text.trim().toLowerCase() ===
                 text.trim().toLowerCase()
@@ -194,6 +212,7 @@ router.put("/updateQuiz/:id", upload.any(), async (req, res) => {
           }
         }
       } else {
+        // --- NEW QUESTION ---
         const insertQ = await pool.query(
           `INSERT INTO poll_questions (poll_id, type, question_text, is_competitor_question)
            VALUES ($1, $2, $3, $4)
@@ -203,13 +222,8 @@ router.put("/updateQuiz/:id", upload.any(), async (req, res) => {
 
         const newQuestionId = insertQ.rows[0].id;
 
-        if (isChoice && Array.isArray(q.options)) {
-          for (const opt of q.options) {
-            const text =
-              typeof opt === "string"
-                ? opt
-                : opt.optionText || opt.text || "";
-
+        if (isChoice) {
+          for (const text of optionsToUse) {
             await pool.query(
               `INSERT INTO poll_options (question_id, option_text)
                VALUES ($1, $2)`,
@@ -222,13 +236,13 @@ router.put("/updateQuiz/:id", upload.any(), async (req, res) => {
 
     await pool.query("COMMIT");
     return res.status(200).json({ message: "Quiz updated successfully." });
+
   } catch (err) {
     console.error("Update quiz error:", err);
     await pool.query("ROLLBACK");
     return res.status(500).json({ message: "Failed to update quiz." });
-  } 
+  }
 });
-
 
 router.get("/", async (req, res) => {
   try {
@@ -281,13 +295,25 @@ router.get("/:id", async (req, res) => {
     for (const q of questionsRes.rows) {
       let options: { id: number; optionText: string }[] = [];
 
-      if (q.type === "single-choice" || q.type === "multi-choice" || q.type === "yes-no-notsure") {
+      if (q.type === "single-choice" || q.type === "multi-choice" || q.type === "yes-no-notsure" || q.type === "ranking" || q.type === "rating") {
         const opts = await client.query(
           `SELECT id, option_text FROM poll_options WHERE question_id = $1 ORDER BY id`, 
           [q.id]
         );
-        options = opts.rows.map((opt: { id: number; option_text: string }) => ({ id: opt.id, optionText: opt.option_text }));
+          options = opts.rows.map((opt: { id: number; option_text: string }) => {
+          if (q.type === "rating") {
+            try {
+              const parsed = JSON.parse(opt.option_text);
+              return { id: opt.id, optionText: parsed.scale?.toString() || "5" };
+            } catch {
+              return { id: opt.id, optionText: "5" };
+            }
+          } else {
+            return { id: opt.id, optionText: opt.option_text };
+          }
+        });
       }
+      
 
       questions.push({
         id: q.id,

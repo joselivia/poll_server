@@ -16,7 +16,7 @@ interface Option {
 
 interface Question {
   id: number;
-  type: 'multi-choice'| 'single-choice' | 'open-ended' | 'yes-no-notsure' | 'rating';
+  type: 'multi-choice'| 'single-choice' | 'open-ended' | 'yes-no-notsure' | 'rating' | 'ranking';
   questionText: string;
   options?: Option[];
   isCompetitorQuestion?: boolean;
@@ -35,7 +35,7 @@ interface PollData {
 interface AggregatedResponse {
   questionId: number;
   questionText: string;
-  type: 'single-choice'| 'multi-choice' | 'open-ended' | 'yes-no-notsure' | 'rating';
+  type: 'single-choice'| 'multi-choice' | 'open-ended' | 'yes-no-notsure' | 'rating' | 'ranking';
   isCompetitorQuestion?: boolean;
   totalResponses: number;
   choices?: {
@@ -103,7 +103,16 @@ if (r.rating ) {
     rating: r.rating
   });
 }
- 
+   if (r.type === "ranking" && Array.isArray(r.selectedOptionIds)) {
+        for (let rank = 0; rank < r.selectedOptionIds.length; rank++) {
+          const optionId = r.selectedOptionIds[rank];
+          await pool.query(
+            `INSERT INTO poll_rankings (poll_id, question_id, option_id, voter_id, rank_position) VALUES ($1, $2, $3, $4, $5)`,
+            [pollId, r.questionId, optionId, userIdentifier, rank + 1]
+          );
+        }
+      }
+    
   }
   try {
 const openEndedResponsesJson = openEndedResponses;
