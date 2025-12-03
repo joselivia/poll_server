@@ -105,80 +105,114 @@ router.post("/createQuiz", upload.any(), async (req, res) => {
 });
 router.put("/updateQuiz/:id", upload.any(), async (req, res) => {
   const pollId = parseInt(req.params.id);
-  if (isNaN(pollId)) return res.status(400).json({ message: "Invalid poll ID" });
+  if (isNaN(pollId)) {
+    return res.status(400).json({ message: "Invalid poll ID" });
+  }
 
-  const client = await pool.connect();
+   try {
+    await pool.query("BEGIN");
 
-  try {
-    await client.query("BEGIN");
     const pollQuestions = JSON.parse(req.body.PollQuestions || "[]");
-    const pollExists = await client.query(`SELECT id FROM polls WHERE id = $1`, [pollId]);
+    const pollExists = await pool.query(
+      `SELECT id FROM polls WHERE id = $1`,
+      [pollId]
+    );
+
     if (!pollExists.rows.length) {
-      await client.query("ROLLBACK");
+      await pool.query("ROLLBACK");
       return res.status(404).json({ message: "Poll not found." });
     }
 
-    console.log("Updating quiz for poll:", pollId);
-    const existingQuestionsRes = await client.query(
+    const existingQuestionsRes = await pool.query(
       `SELECT id FROM poll_questions WHERE poll_id = $1`,
       [pollId]
     );
-    const existingQuestionIds = existingQuestionsRes.rows.map(r => r.id);
+    const existingQuestionIds = existingQuestionsRes.rows.map((r) => r.id);
 
     for (const q of pollQuestions) {
       const questionIdNum = q.id ? parseInt(q.id) : null;
+      const isExisting =
+        questionIdNum && existingQuestionIds.includes(questionIdNum);
 
-      if (questionIdNum && existingQuestionIds.includes(questionIdNum)) {
-        // Update existing question
-        await client.query(
+      const isChoice =
+        q.type === "single-choice" ||
+        q.type === "multi-choice" ||
+        q.type === "yes-no-notsure" ||
+        q.type === "rate";
+
+      if (isExisting) {
+        // --- UPDATE QUESTION ---
+        await pool.query(
           `UPDATE poll_questions
            SET type=$1, question_text=$2, is_competitor_question=$3
            WHERE id=$4`,
           [q.type, q.questionText, !!q.isCompetitorQuestion, questionIdNum]
         );
 
-        // Remove old options
-        await client.query(`DELETE FROM poll_options WHERE question_id=$1`, [questionIdNum]);
+        // --- UPDATE OPTIONS (safe for votes!) ---
+        if (isChoice) {
+          const existingOptionsRes = await pool.query(
+            `SELECT id, option_text FROM poll_options WHERE question_id = $1`,
+            [questionIdNum]
+          );
 
-if (
-  q.type === "single-choice" ||
-  q.type === "multi-choice" ||
-  q.type === "yes-no-notsure" ||
-  q.type === "rate"
-) {
-  let optsToInsert: string[] = [];
-type Option = string | { optionText?: string; text?: string };
+          const existingOptions = existingOptionsRes.rows;
 
-if (Array.isArray(q.options) && q.options.length > 0) {
-  for (const opt of q.options as Option[]) {
-    const text = typeof opt === "string" ? opt : opt.optionText || opt.text || "";
-    await client.query(
-      `INSERT INTO poll_options (question_id, option_text) VALUES ($1,$2)`,
-      [questionIdNum, text]
-    );
-  }
-}
+          for (const opt of q.options || []) {
+            const optionId = opt.id ? parseInt(opt.id) : null;
+            const text =
+              typeof opt === "string"
+                ? opt
+                : opt.optionText || opt.text || "";
 
-}
+            if (optionId) {
+              await pool.query(
+                `UPDATE poll_options SET option_text=$1 WHERE id=$2 AND question_id=$3`,
+                [text, optionId, questionIdNum]
+              );
+              continue;
+            }
 
+           const match = existingOptions.find(
+              (o) =>
+                o.option_text.trim().toLowerCase() ===
+                text.trim().toLowerCase()
+            );
+
+            if (match) {
+              await pool.query(
+                `UPDATE poll_options SET option_text=$1 WHERE id=$2`,
+                [text, match.id]
+              );
+            } else {
+              await pool.query(
+                `INSERT INTO poll_options (question_id, option_text)
+                 VALUES ($1, $2)`,
+                [questionIdNum, text]
+              );
+            }
+          }
+        }
       } else {
-        // Insert new question
-        const insertQ = await client.query(
-          `INSERT INTO poll_questions (poll_id,type,question_text,is_competitor_question)
-           VALUES ($1,$2,$3,$4) RETURNING id`,
+        const insertQ = await pool.query(
+          `INSERT INTO poll_questions (poll_id, type, question_text, is_competitor_question)
+           VALUES ($1, $2, $3, $4)
+           RETURNING id`,
           [pollId, q.type, q.questionText, !!q.isCompetitorQuestion]
         );
 
         const newQuestionId = insertQ.rows[0].id;
 
-        if (
-          (q.type === "single-choice" || q.type === "multi-choice" || q.type === "yes-no-notsure") &&
-          Array.isArray(q.options)
-        ) {
+        if (isChoice && Array.isArray(q.options)) {
           for (const opt of q.options) {
-            const text = typeof opt === "string" ? opt : opt.optionText || opt.text;
-            await client.query(
-              `INSERT INTO poll_options (question_id, option_text) VALUES ($1,$2)`,
+            const text =
+              typeof opt === "string"
+                ? opt
+                : opt.optionText || opt.text || "";
+
+            await pool.query(
+              `INSERT INTO poll_options (question_id, option_text)
+               VALUES ($1, $2)`,
               [newQuestionId, text]
             );
           }
@@ -186,16 +220,15 @@ if (Array.isArray(q.options) && q.options.length > 0) {
       }
     }
 
-    await client.query("COMMIT");
+    await pool.query("COMMIT");
     return res.status(200).json({ message: "Quiz updated successfully." });
   } catch (err) {
     console.error("Update quiz error:", err);
-    await client.query("ROLLBACK");
+    await pool.query("ROLLBACK");
     return res.status(500).json({ message: "Failed to update quiz." });
-  } finally {
-    client.release();
-  }
+  } 
 });
+
 
 router.get("/", async (req, res) => {
   try {

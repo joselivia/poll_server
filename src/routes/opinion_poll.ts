@@ -352,10 +352,8 @@ let ratingValues: number[] = [];
     const totalRatings = ratingValues.length;
     const average = totalRatings > 0 ? ratingValues.reduce((a, b) => a + b, 0) / totalRatings : 0;
     aggregated.averageRating = Number(average.toFixed(2));
-
-   // aggregated.scale = question.scale || 5; // default scale if missing
   }
-  // Save open ended
+
   if (question.type === "open-ended") {
     aggregated.openEndedResponses = openEnded;
   }
