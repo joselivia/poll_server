@@ -48,6 +48,7 @@ interface AggregatedResponse {
    totalSelections?: number; 
   averageRating?: number; 
   ratingValues?: number;
+  rankingData?: any[];
 }
 
 interface DemographicsData {
@@ -56,97 +57,126 @@ interface DemographicsData {
   totalRespondents: number;
 }
 router.post("/:pollId/vote", async (req, res) => {
-  const pollId = parseInt(req.params.pollId);
-  const { userIdentifier, responses, respondentName, respondentAge, respondentGender,region,
+  const pollId = parseInt(req.params.pollId, 10);
+  const {
+    userIdentifier,
+    responses,
+    respondentName,
+    respondentAge,
+    respondentGender,
+    region,
     county,
     constituency,
-    ward} = req.body;
-  if (isNaN(pollId) || !userIdentifier || !Array.isArray(responses) || responses.length === 0 || !respondentGender) {
-    return res.status(400).json({ message: "Missing respondent details or responses." });
+    ward,
+  } = req.body;
+
+  // === Basic validation ===
+  if (
+    isNaN(pollId) ||
+    !userIdentifier ||
+    !Array.isArray(responses) ||
+    responses.length === 0
+  ) {
+    return res.status(400).json({ message: "Invalid or missing data." });
   }
-  const selectedOptionIds: number[] = [];
-  const selectedCompetitorIds: number[] = [];
-let openEndedResponses: { questionId: number; response: string }[] = [];
-let ratingResponses: { questionId: number; rating: number }[] = [];
 
-  for (const r of responses) {
-    // Multi-choice or single-choice
-    if (r.selectedOptionIds) {
-      if (Array.isArray(r.selectedOptionIds)) {
-        selectedOptionIds.push(...r.selectedOptionIds);
-      } else {
-        selectedOptionIds.push(r.selectedOptionIds);
-      }
-    }
+  const client = await pool.connect();
 
-    // Competitor selections
-    if (r.selectedCompetitorId) {
-      if (Array.isArray(r.selectedCompetitorId)) {
-        selectedCompetitorIds.push(...r.selectedCompetitorId);
-      } else {
-        selectedCompetitorIds.push(r.selectedCompetitorId);
-      }
-    }
-
-    // Open-ended (store the LAST one)
-    if (r.openEndedResponse) {
-openEndedResponses.push({
-  questionId: r.questionId,
-  response: r.openEndedResponse
-});
-
-    }
-
-if (r.rating ) {
-  ratingResponses.push({
-    questionId: r.questionId,
-    rating: r.rating
-  });
-}
-   if (r.type === "ranking" && Array.isArray(r.selectedOptionIds)) {
+  try {
+    await client.query("BEGIN");
+    for (const r of responses) {
+      if (r.type === "ranking" && Array.isArray(r.selectedOptionIds)) {
         for (let rank = 0; rank < r.selectedOptionIds.length; rank++) {
           const optionId = r.selectedOptionIds[rank];
-          await pool.query(
-            `INSERT INTO poll_rankings (poll_id, question_id, option_id, voter_id, rank_position) VALUES ($1, $2, $3, $4, $5)`,
+
+          await client.query(
+            `INSERT INTO poll_rankings 
+             (poll_id, question_id, option_id, voter_id, rank_position)
+             VALUES ($1, $2, $3, $4, $5)`,
             [pollId, r.questionId, optionId, userIdentifier, rank + 1]
           );
         }
       }
-    
-  }
-  try {
-const openEndedResponsesJson = openEndedResponses;
-await pool.query(`
-  INSERT INTO poll_responses (
-    poll_id, user_identifier,
-    selected_option_ids, selected_competitor_ids,
-    open_ended_responses,rating,
-    respondent_name, respondent_age, respondent_gender,
-    region, county, constituency, ward
-  )
-  VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
-`, [
-  pollId,
-  userIdentifier,
-  selectedOptionIds.length > 0 ? selectedOptionIds : null,
-  selectedCompetitorIds.length > 0 ? selectedCompetitorIds : null,
-  openEndedResponsesJson ,
-  JSON.stringify(ratingResponses),
-  respondentName,
-  respondentAge,
-  respondentGender,
-  region,
-  county,
-  constituency,
-  ward
-]
-);
+    }
+    const selectedOptionIds: number[] = [];
+    const selectedCompetitorIds: number[] = [];
+    const openEndedResponses: { questionId: number; response: string }[] = [];
+    const ratingResponses: { questionId: number; rating: number }[] = [];
 
-    res.status(201).json({ message: "Votes submitted successfully." });
+    for (const r of responses) {
+      // Skip ranking — already saved above
+      if (r.type === "ranking") continue;
+
+      // Single-choice, multi-choice
+      if (r.selectedOptionIds) {
+        const ids = Array.isArray(r.selectedOptionIds)
+          ? r.selectedOptionIds
+          : [r.selectedOptionIds];
+        selectedOptionIds.push(...ids);
+      }
+
+      // Competitor selection
+      if (r.selectedCompetitorIds !== undefined && r.selectedCompetitorIds !== null) {
+        const ids = Array.isArray(r.selectedCompetitorIds)
+          ? r.selectedCompetitorIds
+          : [r.selectedCompetitorIds];
+        selectedCompetitorIds.push(...ids);
+      }
+
+      // Open-ended
+      if (r.openEndedResponse?.trim()) {
+        openEndedResponses.push({
+          questionId: r.questionId,
+          response: r.openEndedResponse.trim(),
+        });
+      }
+
+      // Rating
+      if (typeof r.rating === "number" && r.rating >= 1 && r.rating <= 10) {
+        ratingResponses.push({
+          questionId: r.questionId,
+          rating: r.rating,
+        });
+      }
+    }
+    await client.query(
+      `
+      INSERT INTO poll_responses (
+        poll_id, user_identifier,
+        selected_option_ids, selected_competitor_ids,
+        open_ended_responses, rating,
+        respondent_name, respondent_age, respondent_gender,
+        region, county, constituency, ward
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+      `,
+      [
+        pollId,
+        userIdentifier,
+        selectedOptionIds.length > 0 ? selectedOptionIds : null,
+        selectedCompetitorIds.length > 0 ? selectedCompetitorIds : null,
+        openEndedResponses.length > 0 ? openEndedResponses : null,
+        ratingResponses.length > 0 ? ratingResponses : null,
+        respondentName || null,
+        respondentAge ? parseInt(respondentAge, 10) : null,
+        respondentGender || null,
+        region || null,
+        county || null,
+        constituency || null,
+        ward || null,
+      ]
+    );
+
+    await client.query("COMMIT");
+    return res.status(201).json({ message: "Vote submitted successfully!" });
   } catch (error: any) {
-     console.error("Vote submission transaction error:", error);
-    res.status(500).json({ message: error.message || "Failed to submit votes." });
-  } 
+    await client.query("ROLLBACK");
+    console.error("Vote submission failed:", error);
+    return res
+      .status(500)
+      .json({ message: error.message || "Failed to submit vote." });
+  } finally {
+    client.release();
+  }
 });
 
 router.get("/:pollId/results", async (req, res) => {
@@ -255,66 +285,111 @@ const locationResult = await pool.query(
 
     const aggregatedResponses: AggregatedResponse[] = [];
 
-
 for (const question of formattedPollData.questions) {
-
   const isCompetitor = question.isCompetitorQuestion === true;
 
-  // Initialize counters
   const optionCounts = new Map<number, number>();
   const competitorCounts = new Map<number, number>();
   const openEnded: string[] = [];
-let ratingValues: number[] = [];
-
+  let ratingValues: number[] = [];
   let respondentSet = new Set<string>();
 
+  // Process all responses for this question
   for (const r of allResponses) {
     const user = String(r.user_identifier);
-
-    // 🌟 Count respondent if they answered anything in this question
     let answered = false;
 
-    // If competitor question
+    // Competitor questions
     if (isCompetitor && r.selected_competitor_ids) {
       for (const id of r.selected_competitor_ids) {
-        const competitorMatch = formattedPollData.competitors.find(c => c.id === id);
-        if (competitorMatch) {
+        if (formattedPollData.competitors.find(c => c.id === id)) {
           competitorCounts.set(id, (competitorCounts.get(id) || 0) + 1);
           answered = true;
         }
       }
     }
-    if (!isCompetitor && r.selected_option_ids) {
 
-      // Check only options belonging to this question
+    // Regular option questions
+    if (!isCompetitor && r.selected_option_ids) {
       for (const id of r.selected_option_ids) {
-        const match = question.options?.find(o => o.id === id);
-        if (match) {
+        if (question.options?.some(o => o.id === id)) {
           optionCounts.set(id, (optionCounts.get(id) || 0) + 1);
           answered = true;
         }
       }
     }
 
-    // Open ended
-  if (question.type === "open-ended" && Array.isArray(r.open_ended_responses)) {
-    const match = r.open_ended_responses.find((a: any) => a.questionId === question.id);
-    if (match?.response) {
-      openEnded.push(match.response);
-      answered = true; // ensure respondent count increments
+    // Open-ended
+    if (question.type === "open-ended" && Array.isArray(r.open_ended_responses)) {
+      const match = r.open_ended_responses.find((a: any) => a.questionId === question.id);
+      if (match?.response) {
+        openEnded.push(match.response);
+        answered = true;
+      }
     }
-  }
-// Ratings
-  if (question.type === "rating" && Array.isArray(r.rating)) {
+
+    // Rating
+    if (question.type === "rating" && Array.isArray(r.rating)) {
       const match = r.rating.find((v: any) => v.questionId === question.id);
-      if (match?.rating !== undefined && match.rating !== null) {
+      if (match?.rating !== null && match?.rating !== undefined) {
         ratingValues.push(Number(match.rating));
         answered = true;
       }
     }
 
-
     if (answered) respondentSet.add(user);
+  }
+
+  // === HANDLE RANKING QUESTIONS EXCLUSIVELY ===
+  if (question.type === "ranking") {
+    const rankingQuery = await pool.query(`
+      SELECT 
+        po.id,
+        po.option_text AS label,
+        pr.rank_position,
+        COUNT(*) AS count
+      FROM poll_rankings pr
+      JOIN poll_options po ON pr.option_id = po.id
+      WHERE pr.poll_id = $1 AND pr.question_id = $2
+      GROUP BY po.id, po.option_text, pr.rank_position
+      ORDER BY pr.rank_position ASC, count DESC
+    `, [pollId, question.id]);
+
+    const rankingsByPosition = new Map<number, { id: number; label: string; count: number }[]>();
+
+    for (const row of rankingQuery.rows) {
+      const pos = parseInt(row.rank_position);
+      if (!rankingsByPosition.has(pos)) rankingsByPosition.set(pos, []);
+      rankingsByPosition.get(pos)!.push({
+        id: parseInt(row.id),
+        label: row.label,
+        count: parseInt(row.count),
+      });
+    }
+
+    const sortedRankings = Array.from(rankingsByPosition.entries())
+      .map(([position, options]) => ({
+        position,
+        options: options.sort((a, b) => b.count - a.count),
+      }))
+      .sort((a, b) => a.position - b.position);
+
+    const totalResponses = respondentSet.size || Math.max(
+      ...Array.from(rankingsByPosition.values()).map(opts =>
+        opts.reduce((sum, o) => sum + o.count, 0)
+      ),
+      0
+    );
+
+    aggregatedResponses.push({
+      questionId: question.id,
+      questionText: question.questionText,
+      type: "ranking",
+      totalResponses,
+      rankingData: sortedRankings,
+    });
+
+    continue; // ← THIS IS THE KEY! Skip the rest of the loop
   }
 
   const aggregated: AggregatedResponse = {
@@ -325,49 +400,41 @@ let ratingValues: number[] = [];
     totalResponses: respondentSet.size,
   };
 
-  // Save options
-  if (optionCounts.size > 0) {
-    const totalSelections = Array.from(optionCounts.values()).reduce((a, b) => a + b, 0);
+  // Handle choices (single/multi/competitor)
+  if (optionCounts.size > 0 || competitorCounts.size > 0) {
+    const counts = optionCounts.size > 0 ? optionCounts : competitorCounts;
+    const totalSelections = Array.from(counts.values()).reduce((a, b) => a + b, 0);
 
-    aggregated.choices = Array.from(optionCounts.entries()).map(([id, count]) => {
-      const label = question.options?.find(o => o.id === id)?.optionText ?? `Option ${id}`;
+    aggregated.choices = Array.from(counts.entries()).map(([id, count]) => {
+      let label = "Unknown";
+      if (optionCounts.has(id)) {
+        label = question.options?.find(o => o.id === id)?.optionText ?? `Option ${id}`;
+      } else if (competitorCounts.has(id)) {
+        label = formattedPollData.competitors.find(c => c.id === id)?.name ?? `Competitor ${id}`;
+      }
       return {
         id,
         label,
         count,
-        percentage: totalSelections > 0 ? (count / totalSelections) * 100 : 0,
+        percentage: totalSelections > 0 ? Number(((count / totalSelections) * 100).toFixed(2)) : 0,
       };
     });
 
     aggregated.totalSelections = totalSelections;
   }
 
-  // Save competitor responses
-  if (competitorCounts.size > 0) {
-    const totalSelections = Array.from(competitorCounts.values()).reduce((a, b) => a + b, 0);
-
-    aggregated.choices = Array.from(competitorCounts.entries()).map(([id, count]) => {
-      const comp = formattedPollData.competitors.find(c => c.id === id);
-      return {
-        id,
-        label: comp ? comp.name : `Competitor ${id}`,
-        count,
-        percentage: totalSelections > 0 ? (count / totalSelections) * 100 : 0,
-      };
-    });
-  }
   // Rating
-  if (question.type === "rating") {
-    const totalRatings = ratingValues.length;
-    const average = totalRatings > 0 ? ratingValues.reduce((a, b) => a + b, 0) / totalRatings : 0;
+  if (question.type === "rating" && ratingValues.length > 0) {
+    const average = ratingValues.reduce((a, b) => a + b, 0) / ratingValues.length;
     aggregated.averageRating = Number(average.toFixed(2));
   }
 
+  // Open-ended
   if (question.type === "open-ended") {
     aggregated.openEndedResponses = openEnded;
   }
 
-
+  // Push ONLY for non-ranking questions
   aggregatedResponses.push(aggregated);
 }
     const totalRespondents = new Set(allResponses.map((r: any) => r.user_identifier)).size;
