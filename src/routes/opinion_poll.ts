@@ -295,19 +295,57 @@ router.get("/:pollId/results", async (req, res) => {
           .filter((id: number) => !isNaN(id));
       }
       
-      // Parse open_ended_responses (JSON strings)
+      // Parse open_ended_responses (PostgreSQL array of JSON strings)
       if (typeof r.open_ended_responses === 'string') {
         try {
-          r.open_ended_responses = JSON.parse(r.open_ended_responses);
+          // Remove outer braces and split by quoted strings
+          const arrayContent = r.open_ended_responses.replace(/^{|}$/g, '');
+          if (arrayContent.trim()) {
+            // Match quoted JSON strings within the array
+            const jsonStrings = arrayContent.match(/"(?:[^"\\]|\\.)*"/g) || [];
+            r.open_ended_responses = jsonStrings.map(str => {
+              try {
+                // Remove outer quotes and parse the JSON
+                const unquoted = str.slice(1, -1).replace(/\\"/g, '"').replace(/\\\\/g, '\\');
+                return JSON.parse(unquoted);
+              } catch (e) {
+                return null;
+              }
+            }).filter(item => item !== null);
+          } else {
+            r.open_ended_responses = [];
+          }
         } catch (e) {
           r.open_ended_responses = [];
         }
       }
       
-      // Parse rating (JSON)
+      // Parse rating (PostgreSQL array of JSON objects or simple array)
       if (typeof r.rating === 'string') {
         try {
-          r.rating = JSON.parse(r.rating);
+          // Remove outer braces and split by quoted strings for JSON objects
+          const arrayContent = r.rating.replace(/^{|}$/g, '');
+          if (arrayContent.trim()) {
+            // Check if it contains JSON objects (has quotes)
+            if (arrayContent.includes('"')) {
+              const jsonStrings = arrayContent.match(/"(?:[^"\\]|\\.)*"/g) || [];
+              r.rating = jsonStrings.map(str => {
+                try {
+                  const unquoted = str.slice(1, -1).replace(/\\"/g, '"').replace(/\\\\/g, '\\');
+                  return JSON.parse(unquoted);
+                } catch (e) {
+                  return null;
+                }
+              }).filter(item => item !== null);
+            } else {
+              // Simple numeric array
+              r.rating = arrayContent.split(',')
+                .map((n: string) => parseFloat(n.trim()))
+                .filter((n: number) => !isNaN(n));
+            }
+          } else {
+            r.rating = [];
+          }
         } catch (e) {
           r.rating = [];
         }
