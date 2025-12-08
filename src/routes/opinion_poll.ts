@@ -282,8 +282,36 @@ const locationResult = await pool.query(
       params
     );
 
-    const allResponses = responsesResult.rows; 
+ const allResponses = responsesResult.rows.map((r: any) => {
+  // Parse Postgres array string to number array
+  let selected_option_ids: number[] = [];
+  if (typeof r.selected_option_ids === "string") {
+    selected_option_ids = r.selected_option_ids
+      .replace(/[{}]/g, "")
+      .split(",")
+      .map((x:string) => parseInt(x, 10));
+  } else if (Array.isArray(r.selected_option_ids)) {
+    selected_option_ids = r.selected_option_ids.map((x:string) => parseInt(x, 10));
+  }
 
+  // Parse old open-ended responses
+  let open_ended_responses: { response: string; questionId: number }[] = [];
+  if (Array.isArray(r.open_ended_responses)) {
+    open_ended_responses = r.open_ended_responses.map((x: string) => {
+      try {
+        return JSON.parse(x.replace(/\\/g, ""));
+      } catch {
+        return null;
+      }
+    }).filter(Boolean);
+  } 
+  const rating = Array.isArray(r.rating) ? r.rating : [];
+    return {
+    ...r,
+    selected_option_ids,
+     rating,
+  };
+});
     const aggregatedResponses: AggregatedResponse[] = [];
 
 for (const question of formattedPollData.questions) {
