@@ -64,7 +64,7 @@ router.post("/:pollId/vote", async (req, res) => {
     respondentName,
     respondentAge,
     respondentGender,
-    region,
+     region,
     county,
     constituency,
     ward,
@@ -108,7 +108,7 @@ router.post("/:pollId/vote", async (req, res) => {
       if (r.type === "ranking") continue;
 
       // Single-choice, multi-choice
-      if (r.selectedOptionIds) {
+      if (r.selectedOptionIds !== undefined && r.selectedOptionIds !== null) {
         const ids = Array.isArray(r.selectedOptionIds)
           ? r.selectedOptionIds
           : [r.selectedOptionIds];
@@ -138,6 +138,7 @@ router.post("/:pollId/vote", async (req, res) => {
           rating: r.rating,
         });
       }
+      
     }
     await client.query(
       `
@@ -155,8 +156,8 @@ router.post("/:pollId/vote", async (req, res) => {
         selectedOptionIds.length > 0 ? selectedOptionIds : null,
         selectedCompetitorIds.length > 0 ? selectedCompetitorIds : null,
         openEndedResponses.length > 0 ? openEndedResponses : null,
-        ratingResponses.length > 0 ? ratingResponses : null,
-        respondentName || null,
+ratingResponses.length > 0 ? ratingResponses : null,
+            respondentName || null,
         respondentAge ? parseInt(respondentAge, 10) : null,
         respondentGender || null,
         region || null,
