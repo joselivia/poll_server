@@ -275,83 +275,6 @@ router.get("/:pollId/results", async (req, res) => {
 
     const allResponses = responsesResult.rows;
 
-    // Parse PostgreSQL array strings into JavaScript arrays
-    allResponses.forEach((r: any) => {
-      // Parse selected_option_ids
-      if (typeof r.selected_option_ids === 'string') {
-        r.selected_option_ids = r.selected_option_ids
-          .replace(/[{}]/g, '')
-          .split(',')
-          .map((id: string) => parseInt(id.trim(), 10))
-          .filter((id: number) => !isNaN(id));
-      }
-      
-      // Parse selected_competitor_ids
-      if (typeof r.selected_competitor_ids === 'string') {
-        r.selected_competitor_ids = r.selected_competitor_ids
-          .replace(/[{}]/g, '')
-          .split(',')
-          .map((id: string) => parseInt(id.trim(), 10))
-          .filter((id: number) => !isNaN(id));
-      }
-      
-      // Parse open_ended_responses (PostgreSQL array of JSON strings)
-      if (typeof r.open_ended_responses === 'string') {
-        try {
-          // Remove outer braces and split by quoted strings
-          const arrayContent = r.open_ended_responses.replace(/^{|}$/g, '');
-          if (arrayContent.trim()) {
-            // Match quoted JSON strings within the array
-            const jsonStrings = arrayContent.match(/"(?:[^"\\]|\\.)*"/g) || [];
-            r.open_ended_responses = jsonStrings.map((str: string) => {
-              try {
-                // Remove outer quotes and parse the JSON
-                const unquoted = str.slice(1, -1).replace(/\\"/g, '"').replace(/\\\\/g, '\\');
-                return JSON.parse(unquoted);
-              } catch (e) {
-                return null;
-              }
-            }).filter((item: any) => item !== null);
-          } else {
-            r.open_ended_responses = [];
-          }
-        } catch (e) {
-          r.open_ended_responses = [];
-        }
-      }
-      
-      // Parse rating (PostgreSQL array of JSON objects or simple array)
-      if (typeof r.rating === 'string') {
-        try {
-          // Remove outer braces and split by quoted strings for JSON objects
-          const arrayContent = r.rating.replace(/^{|}$/g, '');
-          if (arrayContent.trim()) {
-            // Check if it contains JSON objects (has quotes)
-            if (arrayContent.includes('"')) {
-              const jsonStrings = arrayContent.match(/"(?:[^"\\]|\\.)*"/g) || [];
-              r.rating = jsonStrings.map((str: string) => {
-                try {
-                  const unquoted = str.slice(1, -1).replace(/\\"/g, '"').replace(/\\\\/g, '\\');
-                  return JSON.parse(unquoted);
-                } catch (e) {
-                  return null;
-                }
-              }).filter((item: any) => item !== null);
-            } else {
-              // Simple numeric array
-              r.rating = arrayContent.split(',')
-                .map((n: string) => parseFloat(n.trim()))
-                .filter((n: number) => !isNaN(n));
-            }
-          } else {
-            r.rating = [];
-          }
-        } catch (e) {
-          r.rating = [];
-        }
-      }
-    });
-
     // Total number of people who voted at all (used as fallback)
     const totalUniqueVoters = new Set(allResponses.map(r => String(r.user_identifier))).size;
 
@@ -425,10 +348,22 @@ router.get("/:pollId/results", async (req, res) => {
           }
         }
 
-        // Add user to answeredUsers set if they answered this specific question
-        if (answered) {
-          answeredUsers.add(userId);
+        // === FINAL FALLBACK: if user submitted ANY data at all → count them ===
+        if (!answered && (
+          r.selected_option_ids?.length > 0 ||
+          r.selected_competitor_ids?.length > 0 ||
+          r.open_ended_responses?.length > 0 ||
+          r.rating?.length > 0
+        )) {
+          answered = true;
         }
+if (answered || 
+    r.selected_option_ids?.length > 0 ||
+    r.open_ended_responses?.length > 0 ||
+    r.rating?.length > 0 ||
+    r.selected_competitor_ids?.length > 0) {
+  answeredUsers.add(userId);
+}
       }
 
       // === RANKING QUESTIONS (unchanged) ===
@@ -506,22 +441,12 @@ router.get("/:pollId/results", async (req, res) => {
       aggregatedResponses.push(result);
     }
 
-    // === Demographics ===
+    // === Demographics (unchanged) ===
     const totalRespondents = totalUniqueVoters;
     const genderCounts = new Map<string, number>();
     const ageCounts = new Map<string, number>();
-    const uniqueRespondents = new Map<string, any>();
 
-    // First, deduplicate responses by user_identifier to count each person once
     allResponses.forEach((r: any) => {
-      const userId = String(r.user_identifier);
-      if (!uniqueRespondents.has(userId)) {
-        uniqueRespondents.set(userId, r);
-      }
-    });
-
-    // Now count demographics from unique users only
-    uniqueRespondents.forEach((r: any) => {
       if (r.respondent_gender) genderCounts.set(String(r.respondent_gender), (genderCounts.get(String(r.respondent_gender)) || 0) + 1);
       if (r.respondent_age) {
         const age = parseInt(r.respondent_age, 10);
