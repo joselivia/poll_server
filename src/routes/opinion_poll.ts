@@ -425,22 +425,10 @@ router.get("/:pollId/results", async (req, res) => {
           }
         }
 
-        // === FINAL FALLBACK: if user submitted ANY data at all → count them ===
-        if (!answered && (
-          r.selected_option_ids?.length > 0 ||
-          r.selected_competitor_ids?.length > 0 ||
-          r.open_ended_responses?.length > 0 ||
-          r.rating?.length > 0
-        )) {
-          answered = true;
+        // Add user to answeredUsers set if they answered this specific question
+        if (answered) {
+          answeredUsers.add(userId);
         }
-if (answered || 
-    r.selected_option_ids?.length > 0 ||
-    r.open_ended_responses?.length > 0 ||
-    r.rating?.length > 0 ||
-    r.selected_competitor_ids?.length > 0) {
-  answeredUsers.add(userId);
-}
       }
 
       // === RANKING QUESTIONS (unchanged) ===
@@ -518,12 +506,22 @@ if (answered ||
       aggregatedResponses.push(result);
     }
 
-    // === Demographics (unchanged) ===
+    // === Demographics ===
     const totalRespondents = totalUniqueVoters;
     const genderCounts = new Map<string, number>();
     const ageCounts = new Map<string, number>();
+    const uniqueRespondents = new Map<string, any>();
 
+    // First, deduplicate responses by user_identifier to count each person once
     allResponses.forEach((r: any) => {
+      const userId = String(r.user_identifier);
+      if (!uniqueRespondents.has(userId)) {
+        uniqueRespondents.set(userId, r);
+      }
+    });
+
+    // Now count demographics from unique users only
+    uniqueRespondents.forEach((r: any) => {
       if (r.respondent_gender) genderCounts.set(String(r.respondent_gender), (genderCounts.get(String(r.respondent_gender)) || 0) + 1);
       if (r.respondent_age) {
         const age = parseInt(r.respondent_age, 10);
