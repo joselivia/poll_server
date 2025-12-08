@@ -303,7 +303,7 @@ router.get("/:pollId/results", async (req, res) => {
           if (arrayContent.trim()) {
             // Match quoted JSON strings within the array
             const jsonStrings = arrayContent.match(/"(?:[^"\\]|\\.)*"/g) || [];
-            r.open_ended_responses = jsonStrings.map(str => {
+            r.open_ended_responses = jsonStrings.map((str: string) => {
               try {
                 // Remove outer quotes and parse the JSON
                 const unquoted = str.slice(1, -1).replace(/\\"/g, '"').replace(/\\\\/g, '\\');
@@ -311,7 +311,7 @@ router.get("/:pollId/results", async (req, res) => {
               } catch (e) {
                 return null;
               }
-            }).filter(item => item !== null);
+            }).filter((item: any) => item !== null);
           } else {
             r.open_ended_responses = [];
           }
@@ -329,14 +329,14 @@ router.get("/:pollId/results", async (req, res) => {
             // Check if it contains JSON objects (has quotes)
             if (arrayContent.includes('"')) {
               const jsonStrings = arrayContent.match(/"(?:[^"\\]|\\.)*"/g) || [];
-              r.rating = jsonStrings.map(str => {
+              r.rating = jsonStrings.map((str: string) => {
                 try {
                   const unquoted = str.slice(1, -1).replace(/\\"/g, '"').replace(/\\\\/g, '\\');
                   return JSON.parse(unquoted);
                 } catch (e) {
                   return null;
                 }
-              }).filter(item => item !== null);
+              }).filter((item: any) => item !== null);
             } else {
               // Simple numeric array
               r.rating = arrayContent.split(',')
