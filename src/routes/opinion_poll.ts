@@ -275,6 +275,45 @@ router.get("/:pollId/results", async (req, res) => {
 
     const allResponses = responsesResult.rows;
 
+    // Parse PostgreSQL array strings into JavaScript arrays
+    allResponses.forEach((r: any) => {
+      // Parse selected_option_ids
+      if (typeof r.selected_option_ids === 'string') {
+        r.selected_option_ids = r.selected_option_ids
+          .replace(/[{}]/g, '')
+          .split(',')
+          .map((id: string) => parseInt(id.trim(), 10))
+          .filter((id: number) => !isNaN(id));
+      }
+      
+      // Parse selected_competitor_ids
+      if (typeof r.selected_competitor_ids === 'string') {
+        r.selected_competitor_ids = r.selected_competitor_ids
+          .replace(/[{}]/g, '')
+          .split(',')
+          .map((id: string) => parseInt(id.trim(), 10))
+          .filter((id: number) => !isNaN(id));
+      }
+      
+      // Parse open_ended_responses (JSON strings)
+      if (typeof r.open_ended_responses === 'string') {
+        try {
+          r.open_ended_responses = JSON.parse(r.open_ended_responses);
+        } catch (e) {
+          r.open_ended_responses = [];
+        }
+      }
+      
+      // Parse rating (JSON)
+      if (typeof r.rating === 'string') {
+        try {
+          r.rating = JSON.parse(r.rating);
+        } catch (e) {
+          r.rating = [];
+        }
+      }
+    });
+
     // Total number of people who voted at all (used as fallback)
     const totalUniqueVoters = new Set(allResponses.map(r => String(r.user_identifier))).size;
 
