@@ -82,23 +82,30 @@ router.get('/posts/:id', async (req, res) => {
     const { id } = req.params;
 
     const result = await pool.query(`SELECT * FROM blog_posts WHERE id = $1`, [id]);
+
     if (result.rows.length === 0) {
-       res.status(404).json({ error: 'Post not found' });
+      return res.status(404).json({ error: 'Post not found' }); // IMPORTANT: return here
     }
 
     const post = result.rows[0];
 
-    const images = (post.image_data || []).map((img: Buffer) =>
+    const imageArray = Array.isArray(post.image_data) ? post.image_data : [];
+    const videoArray = Array.isArray(post.video_data) ? post.video_data : [];
+    const pdfArray   = Array.isArray(post.pdf_data)   ? post.pdf_data   : [];
+
+    const images = imageArray.map((img: Buffer) =>
       `data:image/jpeg;base64,${img.toString('base64')}`
     );
-    const videos = (post.video_data || []).map((vid: Buffer) =>
+
+    const videos = videoArray.map((vid: Buffer) =>
       `data:video/mp4;base64,${vid.toString('base64')}`
     );
-const pdfs = (post.pdf_data || []).map((pdf: Buffer) =>
-  `data:application/pdf;base64,${pdf.toString('base64')}`
-);
 
-    res.json({
+    const pdfs = pdfArray.map((pdf: Buffer) =>
+      `data:application/pdf;base64,${pdf.toString('base64')}`
+    );
+
+    return res.json({
       id: post.id,
       title: post.title,
       content: post.content,
@@ -107,10 +114,12 @@ const pdfs = (post.pdf_data || []).map((pdf: Buffer) =>
       videos,
       pdfs,
     });
+
   } catch (error) {
     console.error("❌ Failed to fetch post details:", error);
-    res.status(500).json({ error: "Failed to fetch post details" });
+    return res.status(500).json({ error: "Failed to fetch post details" });
   }
 });
+
 
 export default router;   
