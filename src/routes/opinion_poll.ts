@@ -282,36 +282,8 @@ const locationResult = await pool.query(
       params
     );
 
- const allResponses = responsesResult.rows.map((r: any) => {
-  // Parse Postgres array string to number array
-  let selected_option_ids: number[] = [];
-  if (typeof r.selected_option_ids === "string") {
-    selected_option_ids = r.selected_option_ids
-      .replace(/[{}]/g, "")
-      .split(",")
-      .map((x:string) => parseInt(x, 10));
-  } else if (Array.isArray(r.selected_option_ids)) {
-    selected_option_ids = r.selected_option_ids.map((x:string) => parseInt(x, 10));
-  }
+    const allResponses = responsesResult.rows; 
 
-  // Parse old open-ended responses
-  let open_ended_responses: { response: string; questionId: number }[] = [];
-  if (Array.isArray(r.open_ended_responses)) {
-    open_ended_responses = r.open_ended_responses.map((x: string) => {
-      try {
-        return JSON.parse(x.replace(/\\/g, ""));
-      } catch {
-        return null;
-      }
-    }).filter(Boolean);
-  } 
-  const rating = Array.isArray(r.rating) ? r.rating : [];
-    return {
-    ...r,
-    selected_option_ids,
-     rating,
-  };
-});
     const aggregatedResponses: AggregatedResponse[] = [];
 
 for (const question of formattedPollData.questions) {
@@ -321,52 +293,58 @@ for (const question of formattedPollData.questions) {
   const competitorCounts = new Map<number, number>();
   const openEnded: string[] = [];
   let ratingValues: number[] = [];
-  let respondentSet = new Set<string>();
-
+const respondentsWhoAnsweredThisQuestion = new Set<string>();
   // Process all responses for this question
   for (const r of allResponses) {
     const user = String(r.user_identifier);
-    let answered = false;
-
-    // Competitor questions
-    if (isCompetitor && r.selected_competitor_ids) {
-      for (const id of r.selected_competitor_ids) {
-        if (formattedPollData.competitors.find(c => c.id === id)) {
-          competitorCounts.set(id, (competitorCounts.get(id) || 0) + 1);
-          answered = true;
-        }
-      }
-    }
-
-    // Regular option questions
-    if (!isCompetitor && r.selected_option_ids) {
-      for (const id of r.selected_option_ids) {
+let answeredThisQuestion = false;
+// 1. Single/Multi choice
+  if (!isCompetitor && Array.isArray(r.selected_option_ids) && r.selected_option_ids.length > 0) {
+    const hasOptionFromThisQuestion = r.selected_option_ids.some((id: number) =>
+      question.options?.some(o => o.id === id)
+    );
+    if (hasOptionFromThisQuestion) {
+      answeredThisQuestion = true;
+      // Also count the actual votes
+      r.selected_option_ids.forEach((id: number) => {
         if (question.options?.some(o => o.id === id)) {
           optionCounts.set(id, (optionCounts.get(id) || 0) + 1);
-          answered = true;
         }
-      }
+      });
     }
+  }
+// 2. Competitor questions
+  if (isCompetitor && Array.isArray(r.selected_competitor_ids) && r.selected_competitor_ids.length > 0) {
+    answeredThisQuestion = true;
+    r.selected_competitor_ids.forEach((id: number) => {
+      competitorCounts.set(id, (competitorCounts.get(id) || 0) + 1);
+    });
+  }
 
-    // Open-ended
-    if (question.type === "open-ended" && Array.isArray(r.open_ended_responses)) {
-      const match = r.open_ended_responses.find((a: any) => a.questionId === question.id);
-      if (match?.response) {
-        openEnded.push(match.response);
-        answered = true;
-      }
+// 3. Open-ended
+  if (question.type === "open-ended" && Array.isArray(r.open_ended_responses)) {
+    const match = r.open_ended_responses.find((item: any) => 
+      item?.questionId === question.id && item?.response?.trim()
+    );
+    if (match) {
+      answeredThisQuestion = true;
+      openEnded.push(match.response);
     }
+  }
 
-    // Rating
-    if (question.type === "rating" && Array.isArray(r.rating)) {
-      const match = r.rating.find((v: any) => v.questionId === question.id);
-      if (match?.rating !== null && match?.rating !== undefined) {
-        ratingValues.push(Number(match.rating));
-        answered = true;
-      }
+// 4. Rating
+  if (question.type === "rating" && Array.isArray(r.rating)) {
+    const match = r.rating.find((item: any) => 
+      item?.questionId === question.id && item.rating != null
+    );
+    if (match) {
+      answeredThisQuestion = true;
+      ratingValues.push(Number(match.rating));
     }
-
-    if (answered) respondentSet.add(user);
+  }
+if (answeredThisQuestion) {
+    respondentsWhoAnsweredThisQuestion.add(user);
+  }
   }
 
   // === HANDLE RANKING QUESTIONS EXCLUSIVELY ===
@@ -403,18 +381,12 @@ for (const question of formattedPollData.questions) {
       }))
       .sort((a, b) => a.position - b.position);
 
-    const totalResponses = respondentSet.size || Math.max(
-      ...Array.from(rankingsByPosition.values()).map(opts =>
-        opts.reduce((sum, o) => sum + o.count, 0)
-      ),
-      0
-    );
 
     aggregatedResponses.push({
       questionId: question.id,
       questionText: question.questionText,
       type: "ranking",
-      totalResponses,
+      totalResponses:respondentsWhoAnsweredThisQuestion.size,
       rankingData: sortedRankings,
     });
 
@@ -426,7 +398,7 @@ for (const question of formattedPollData.questions) {
     questionText: question.questionText,
     type: question.type,
     isCompetitorQuestion: isCompetitor,
-    totalResponses: respondentSet.size,
+    totalResponses: respondentsWhoAnsweredThisQuestion.size,
   };
 
   // Handle choices (single/multi/competitor)
