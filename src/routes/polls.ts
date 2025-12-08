@@ -145,7 +145,15 @@ router.put("/updateQuiz/:id", upload.any(), async (req, res) => {
     );
     const existingQuestionIds = existingQuestionsRes.rows.map((r) => r.id);
 
-    const incomingQuestionIds = pollQuestions.filter(q => q.id).map(q => (q.id));
+    // Parse incoming question IDs as numbers for proper comparison
+    const incomingQuestionIds = pollQuestions
+      .filter(q => q.id)
+      .map(q => {
+        const parsed = typeof q.id === 'string' ? parseInt(q.id, 10) : q.id;
+        return isNaN(parsed!) ? null : parsed;
+      })
+      .filter(id => id !== null) as number[];
+    
     const questionsToDelete = existingQuestionIds.filter(id => !incomingQuestionIds.includes(id));
 
     for (const qid of questionsToDelete) {
@@ -153,13 +161,19 @@ router.put("/updateQuiz/:id", upload.any(), async (req, res) => {
     }
 
     for (const q of pollQuestions) {
-      const questionIdNum = q.id || null;
-      const isExisting = questionIdNum && existingQuestionIds.includes(questionIdNum);
+      // Parse question ID as number
+      let questionIdNum: number | null = null;
+      if (q.id) {
+        const parsed = typeof q.id === 'string' ? parseInt(q.id, 10) : q.id;
+        questionIdNum = isNaN(parsed) ? null : parsed;
+      }
+      
+      const isExisting = questionIdNum !== null && existingQuestionIds.includes(questionIdNum);
 
       const isChoice =
         q.type === "single-choice" ||
         q.type === "multi-choice" ||
-        q.type === "rate" ||
+        q.type === "ranking" ||
         q.type === "yes-no-notsure";
 
       // FORCE DEFAULT OPTIONS FOR YES-NO-NOTSURE
@@ -167,7 +181,7 @@ router.put("/updateQuiz/:id", upload.any(), async (req, res) => {
 
       if (q.type === "yes-no-notsure") {
         optionsToUse = ["Yes", "No", "Not Sure"];
-      } else {
+      } else if (isChoice) {
         optionsToUse = (q.options || []).map(opt =>
           typeof opt === "string" ? opt : opt.optionText || opt.text || ""
         );
@@ -183,12 +197,15 @@ router.put("/updateQuiz/:id", upload.any(), async (req, res) => {
         );
 
         if (isChoice) {
-          // fetch existing
+          // fetch existing options
           const existingOptionsRes = await pool.query(
             `SELECT id, option_text FROM poll_options WHERE question_id = $1`,
             [questionIdNum]
           );
           const existingOptions = existingOptionsRes.rows;
+
+          // Track which options were matched
+          const matchedOptionIds: number[] = [];
 
           for (const text of optionsToUse) {
             const match = existingOptions.find(
@@ -198,6 +215,7 @@ router.put("/updateQuiz/:id", upload.any(), async (req, res) => {
             );
 
             if (match) {
+              matchedOptionIds.push(match.id);
               await pool.query(
                 `UPDATE poll_options SET option_text=$1 WHERE id=$2`,
                 [text, match.id]
@@ -209,6 +227,15 @@ router.put("/updateQuiz/:id", upload.any(), async (req, res) => {
                 [questionIdNum, text]
               );
             }
+          }
+
+          // Delete options that are no longer present
+          const optionsToDeleteIds = existingOptions
+            .filter(opt => !matchedOptionIds.includes(opt.id))
+            .map(opt => opt.id);
+          
+          for (const optId of optionsToDeleteIds) {
+            await pool.query(`DELETE FROM poll_options WHERE id = $1`, [optId]);
           }
         }
       } else {
