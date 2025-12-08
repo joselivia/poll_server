@@ -357,10 +357,13 @@ router.get("/:pollId/results", async (req, res) => {
         )) {
           answered = true;
         }
-
-        if (answered) {
-          answeredUsers.add(userId);
-        }
+if (answered || 
+    r.selected_option_ids?.length > 0 ||
+    r.open_ended_responses?.length > 0 ||
+    r.rating?.length > 0 ||
+    r.selected_competitor_ids?.length > 0) {
+  answeredUsers.add(userId);
+}
       }
 
       // === RANKING QUESTIONS (unchanged) ===
@@ -396,7 +399,7 @@ router.get("/:pollId/results", async (req, res) => {
           questionId: question.id,
           questionText: question.questionText,
           type: "ranking",
-          totalResponses: answeredUsers.size || totalUniqueVoters,
+          totalResponses: answeredUsers.size,
           rankingData: sortedRankings,
         });
         continue;
@@ -408,7 +411,7 @@ router.get("/:pollId/results", async (req, res) => {
         questionText: question.questionText,
         type: question.type,
         isCompetitorQuestion: question.isCompetitorQuestion,
-        totalResponses: answeredUsers.size || totalUniqueVoters, // ← THIS FIXES EVERYTHING
+        totalResponses: answeredUsers.size,
       };
 
       // Choices
