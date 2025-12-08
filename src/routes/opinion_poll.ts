@@ -186,49 +186,38 @@ router.get("/:pollId/results", async (req, res) => {
     return res.status(400).json({ message: "Invalid poll ID." });
   }
 
-let { county, constituency, ward } = req.query;
-if (Array.isArray(county)) county = county[0];
-if (Array.isArray(constituency)) constituency = constituency[0];
-if (Array.isArray(ward)) ward = ward[0];
+  let { county, constituency, ward } = req.query;
+  if (Array.isArray(county)) county = county[0];
+  county;
+  if (Array.isArray(constituency)) constituency = constituency[0];
+  if (Array.isArray(ward)) ward = ward[0];
 
-let filterQuery = `WHERE poll_id = $1`;
-let params: (string | number)[] = [pollId];
-let index = 2;
+  let filterQuery = `WHERE poll_id = $1`;
+  let params: any[] = [pollId];
+  let index = 2;
 
-if (county) {
-  filterQuery += ` AND county = $${index++}`;
-  params.push(String(county));
-}
-
-if (constituency) {
-  filterQuery += ` AND constituency = $${index++}`;
-  params.push(String(constituency));
-}
-
-if (ward) {
-  filterQuery += ` AND ward = $${index++}`;
-  params.push(String(ward));
-}
-
+  if (county) { filterQuery += ` AND county = $${index++}`; params.push(county); }
+  if (constituency) { filterQuery += ` AND constituency = $${index++}`; params.push(constituency); }
+  if (ward) { filterQuery += ` AND ward = $${index++}`; params.push(ward); }
 
   try {
+    // === 1. Load Poll + Questions + Competitors ===
     const pollResult = await pool.query(
       `SELECT
-          p.id, p.title, p.category, p.presidential, p.region, p.county, p.constituency, p.ward, p.created_at, p.voting_expires_at,
-          json_agg(DISTINCT jsonb_build_object('id', c.id, 'name', c.name, 'party', c.party, 'profileImage', encode(c.profile_image, 'base64'))) AS competitors,
+          p.id, p.title, p.category, p.presidential, p.region, p.county, p.constituency, p.ward, p.created_at,
+          json_agg(DISTINCT jsonb_build_object('id', c.id, 'name', c.name, 'party', c.party, 'profileImage', encode(c.profile_image, 'base64'))) FILTER (WHERE c.id IS NOT NULL) AS competitors,
           json_agg(DISTINCT jsonb_build_object(
             'id', q.id,
             'type', q.type,
             'questionText', q.question_text,
             'options', (SELECT json_agg(jsonb_build_object('id', o.id, 'optionText', o.option_text)) FROM poll_options o WHERE o.question_id = q.id),
             'isCompetitorQuestion', q.is_competitor_question
-          )) AS questions
+          )) FILTER (WHERE q.id IS NOT NULL) AS questions
         FROM polls p
         LEFT JOIN poll_competitors c ON p.id = c.poll_id
         LEFT JOIN poll_questions q ON p.id = q.poll_id
         WHERE p.id = $1
-        GROUP BY p.id
-      `,
+        GROUP BY p.id`,
       [pollId]
     );
 
@@ -238,258 +227,258 @@ if (ward) {
 
     const pollData = pollResult.rows[0];
 
-    const formattedCompetitors = (!pollData.competitors || pollData.competitors[0] === null)
-      ? []
-      : pollData.competitors.map((comp: any) => ({
-          id: comp.id,
-          name: comp.name,
-          party: comp.party,
-          profileImage: comp.profileImage ? `data:image/png;base64,${comp.profileImage}` : null,
-        }));
+    const formattedCompetitors = pollData.competitors?.[0] === null ? [] : pollData.competitors.map((c: any) => ({
+      id: c.id,
+      name: c.name,
+      party: c.party,
+      profileImage: c.profileImage ? `data:image/png;base64,${c.profileImage}` : null,
+    }));
 
-    const formattedQuestions = (!pollData.questions || pollData.questions[0] === null)
-      ? []
-      : pollData.questions.map((q: any) => ({
-          id: q.id,
-          type: q.type,
-          questionText: q.questionText,
-          options: q.options ? q.options.map((o: any) => ({ id: o.id, optionText: o.optionText })) : [],
-          isCompetitorQuestion: q.isCompetitorQuestion === true,
-          scale: q.scale ?? 0,
-        }));
+    const formattedQuestions = pollData.questions?.[0] === null ? [] : pollData.questions.map((q: any) => ({
+      id: q.id,
+      type: q.type,
+      questionText: q.questionText,
+      options: q.options || [],
+      isCompetitorQuestion: !!q.isCompetitorQuestion,
+      scale: q.scale ?? 5,
+    }));
 
-    const formattedPollData: PollData = {
+    const formattedPollData = {
       id: pollData.id,
       title: pollData.title,
       category: pollData.category,
       presidential: pollData.presidential,
-       createdAt: pollData.created_at,
-        competitors: formattedCompetitors,
+      createdAt: pollData.created_at,
+      competitors: formattedCompetitors,
       questions: formattedQuestions,
     };
-// Get ALL possible locations for this poll (unfiltered)
-const locationResult = await pool.query(
-  `SELECT DISTINCT region, county, constituency, ward
-   FROM poll_responses
-   WHERE poll_id = $1`,
-  [pollId]
-);
+
+    // === 2. Load Responses ===
+    const locationResult = await pool.query(
+      `SELECT DISTINCT region, county, constituency, ward FROM poll_responses WHERE poll_id = $1`,
+      [pollId]
+    );
 
     const responsesResult = await pool.query(
-      `SELECT user_identifier, selected_competitor_ids, selected_option_ids, open_ended_responses,rating, respondent_gender, respondent_age,ward, constituency, county, region
+      `SELECT 
+         user_identifier,
+         selected_option_ids,
+         selected_competitor_ids,
+         open_ended_responses,
+         rating,
+         respondent_gender,
+         respondent_age
        FROM poll_responses
        ${filterQuery}`,
       params
     );
 
-    const allResponses = responsesResult.rows; 
+    const allResponses = responsesResult.rows;
 
-    const aggregatedResponses: AggregatedResponse[] = [];
+    // Total number of people who voted at all (used as fallback)
+    const totalUniqueVoters = new Set(allResponses.map(r => String(r.user_identifier))).size;
 
-for (const question of formattedPollData.questions) {
-  const isCompetitor = question.isCompetitorQuestion === true;
+    const aggregatedResponses: any[] = [];
 
-  const optionCounts = new Map<number, number>();
-  const competitorCounts = new Map<number, number>();
-  const openEnded: string[] = [];
-  let ratingValues: number[] = [];
-const respondentsWhoAnsweredThisQuestion = new Set<string>();
-  // Process all responses for this question
-  for (const r of allResponses) {
-    const user = String(r.user_identifier);
-let answeredThisQuestion = false;
-// 1. Single/Multi choice
-  if (!isCompetitor && Array.isArray(r.selected_option_ids) && r.selected_option_ids.length > 0) {
-    const hasOptionFromThisQuestion = r.selected_option_ids.some((id: number) =>
-      question.options?.some(o => o.id === id)
-    );
-    if (hasOptionFromThisQuestion) {
-      answeredThisQuestion = true;
-      // Also count the actual votes
-      r.selected_option_ids.forEach((id: number) => {
-        if (question.options?.some(o => o.id === id)) {
-          optionCounts.set(id, (optionCounts.get(id) || 0) + 1);
+    // === 3. Process Each Question ===
+    for (const question of formattedQuestions) {
+      const optionCounts = new Map<number, number>();
+      const competitorCounts = new Map<number, number>();
+      const openEnded: string[] = [];
+      const ratingValues: number[] = [];
+      const answeredUsers = new Set<string>();
+
+      for (const r of allResponses) {
+        const userId = String(r.user_identifier);
+        let answered = false;
+
+        // === CHOICE-BASED QUESTIONS (single/multi/yes-no-notsure) ===
+        if (["single-choice", "multi-choice", "yes-no-notsure"].includes(question.type)) {
+          if (Array.isArray(r.selected_option_ids) && r.selected_option_ids.length > 0) {
+            // If question has real options → try to match by ID
+            if (question.options.length > 0) {
+              const matched = r.selected_option_ids.some((id: number) =>
+                question.options.some((o: any) => o.id === id)
+              );
+              if (matched) {
+                answered = true;
+                r.selected_option_ids.forEach((id: number) => {
+                  if (question.options.some((o: any) => o.id === id)) {
+                    optionCounts.set(id, (optionCounts.get(id) || 0) + 1);
+                  }
+                });
+              }
+            } else {
+              // OLD POLLS: no options stored → anyone who voted counts
+              answered = true;
+            }
+          }
         }
-      });
-    }
-  }
-// 2. Competitor questions
-  if (isCompetitor && Array.isArray(r.selected_competitor_ids) && r.selected_competitor_ids.length > 0) {
-    answeredThisQuestion = true;
-    r.selected_competitor_ids.forEach((id: number) => {
-      competitorCounts.set(id, (competitorCounts.get(id) || 0) + 1);
-    });
-  }
 
-// 3. Open-ended
-  if (question.type === "open-ended" && Array.isArray(r.open_ended_responses)) {
-    const match = r.open_ended_responses.find((item: any) => 
-      item?.questionId === question.id && item?.response?.trim()
-    );
-    if (match) {
-      answeredThisQuestion = true;
-      openEnded.push(match.response);
-    }
-  }
+        // === COMPETITOR QUESTIONS ===
+        if (question.isCompetitorQuestion && Array.isArray(r.selected_competitor_ids) && r.selected_competitor_ids.length > 0) {
+          answered = true;
+          r.selected_competitor_ids.forEach((id: number) => {
+            competitorCounts.set(id, (competitorCounts.get(id) || 0) + 1);
+          });
+        }
 
-// 4. Rating
-  if (question.type === "rating" && Array.isArray(r.rating)) {
-    const match = r.rating.find((item: any) => 
-      item?.questionId === question.id && item.rating != null
-    );
-    if (match) {
-      answeredThisQuestion = true;
-      ratingValues.push(Number(match.rating));
-    }
-  }
-if (answeredThisQuestion) {
-    respondentsWhoAnsweredThisQuestion.add(user);
-  }
-  }
+        // === OPEN-ENDED ===
+        if (question.type === "open-ended" && Array.isArray(r.open_ended_responses)) {
+          const match = r.open_ended_responses.find((x: any) => x?.questionId === question.id && x?.response?.trim());
+          if (match) {
+            answered = true;
+            openEnded.push(match.response.trim());
+          }
+        }
 
-  // === HANDLE RANKING QUESTIONS EXCLUSIVELY ===
-  if (question.type === "ranking") {
-    const rankingQuery = await pool.query(`
-      SELECT 
-        po.id,
-        po.option_text AS label,
-        pr.rank_position,
-        COUNT(*) AS count
-      FROM poll_rankings pr
-      JOIN poll_options po ON pr.option_id = po.id
-      WHERE pr.poll_id = $1 AND pr.question_id = $2
-      GROUP BY po.id, po.option_text, pr.rank_position
-      ORDER BY pr.rank_position ASC, count DESC
-    `, [pollId, question.id]);
+        // === RATING ===
+        if (question.type === "rating") {
+          if (Array.isArray(r.rating)) {
+            const match = r.rating.find((x: any) => x?.questionId === question.id);
+            if (match?.rating != null) {
+              answered = true;
+              ratingValues.push(Number(match.rating));
+            }
+            // Fallback for old flat rating arrays
+            else if (r.rating.length > 0) {
+              answered = true;
+              ratingValues.push(...r.rating.filter((n: any) => typeof n === "number"));
+            }
+          }
+        }
 
-    const rankingsByPosition = new Map<number, { id: number; label: string; count: number }[]>();
+        // === FINAL FALLBACK: if user submitted ANY data at all → count them ===
+        if (!answered && (
+          r.selected_option_ids?.length > 0 ||
+          r.selected_competitor_ids?.length > 0 ||
+          r.open_ended_responses?.length > 0 ||
+          r.rating?.length > 0
+        )) {
+          answered = true;
+        }
 
-    for (const row of rankingQuery.rows) {
-      const pos = parseInt(row.rank_position);
-      if (!rankingsByPosition.has(pos)) rankingsByPosition.set(pos, []);
-      rankingsByPosition.get(pos)!.push({
-        id: parseInt(row.id),
-        label: row.label,
-        count: parseInt(row.count),
-      });
-    }
-
-    const sortedRankings = Array.from(rankingsByPosition.entries())
-      .map(([position, options]) => ({
-        position,
-        options: options.sort((a, b) => b.count - a.count),
-      }))
-      .sort((a, b) => a.position - b.position);
-
-
-    aggregatedResponses.push({
-      questionId: question.id,
-      questionText: question.questionText,
-      type: "ranking",
-      totalResponses:respondentsWhoAnsweredThisQuestion.size,
-      rankingData: sortedRankings,
-    });
-
-    continue; // ← THIS IS THE KEY! Skip the rest of the loop
-  }
-
-  const aggregated: AggregatedResponse = {
-    questionId: question.id,
-    questionText: question.questionText,
-    type: question.type,
-    isCompetitorQuestion: isCompetitor,
-    totalResponses: respondentsWhoAnsweredThisQuestion.size,
-  };
-
-  // Handle choices (single/multi/competitor)
-  if (optionCounts.size > 0 || competitorCounts.size > 0) {
-    const counts = optionCounts.size > 0 ? optionCounts : competitorCounts;
-    const totalSelections = Array.from(counts.values()).reduce((a, b) => a + b, 0);
-
-    aggregated.choices = Array.from(counts.entries()).map(([id, count]) => {
-      let label = "Unknown";
-      if (optionCounts.has(id)) {
-        label = question.options?.find(o => o.id === id)?.optionText ?? `Option ${id}`;
-      } else if (competitorCounts.has(id)) {
-        label = formattedPollData.competitors.find(c => c.id === id)?.name ?? `Competitor ${id}`;
+        if (answered) {
+          answeredUsers.add(userId);
+        }
       }
-      return {
-        id,
-        label,
-        count,
-        percentage: totalSelections > 0 ? Number(((count / totalSelections) * 100).toFixed(2)) : 0,
+
+      // === RANKING QUESTIONS (unchanged) ===
+      if (question.type === "ranking") {
+        const rankingQuery = await pool.query(`
+          SELECT po.id, po.option_text AS label, pr.rank_position, COUNT(*) AS count
+          FROM poll_rankings pr
+          JOIN poll_options po ON pr.option_id = po.id
+          WHERE pr.poll_id = $1 AND pr.question_id = $2
+          GROUP BY po.id, po.option_text, pr.rank_position
+          ORDER BY pr.rank_position
+        `, [pollId, question.id]);
+
+        const rankingsByPosition = new Map<number, any[]>();
+        for (const row of rankingQuery.rows) {
+          const pos = parseInt(row.rank_position);
+          if (!rankingsByPosition.has(pos)) rankingsByPosition.set(pos, []);
+          rankingsByPosition.get(pos)!.push({
+            id: parseInt(row.id),
+            label: row.label,
+            count: parseInt(row.count),
+          });
+        }
+
+        const sortedRankings = Array.from(rankingsByPosition.entries())
+          .map(([position, options]) => ({
+            position,
+            options: options.sort((a, b) => b.count - a.count),
+          }))
+          .sort((a, b) => a.position - b.position);
+
+        aggregatedResponses.push({
+          questionId: question.id,
+          questionText: question.questionText,
+          type: "ranking",
+          totalResponses: answeredUsers.size || totalUniqueVoters,
+          rankingData: sortedRankings,
+        });
+        continue;
+      }
+
+      // === BUILD RESULT FOR NORMAL QUESTIONS ===
+      const result: any = {
+        questionId: question.id,
+        questionText: question.questionText,
+        type: question.type,
+        isCompetitorQuestion: question.isCompetitorQuestion,
+        totalResponses: answeredUsers.size || totalUniqueVoters, // ← THIS FIXES EVERYTHING
       };
-    });
 
-    aggregated.totalSelections = totalSelections;
-  }
+      // Choices
+      if (optionCounts.size > 0 || competitorCounts.size > 0) {
+        const counts = optionCounts.size > 0 ? optionCounts : competitorCounts;
+        const total = Array.from(counts.values()).reduce((a, b) => a + b, 0);
+        result.choices = Array.from(counts.entries()).map(([id, count]) => ({
+          id,
+          label: optionCounts.has(id)
+            ? question.options.find((o: any) => o.id === id)?.optionText || "Unknown"
+            : formattedPollData.competitors.find((c: any) => c.id === id)?.name || "Unknown",
+          count,
+          percentage: total > 0 ? Number(((count / total) * 100).toFixed(1)) : 0,
+        }));
+      }
 
-  // Rating
-  if (question.type === "rating" && ratingValues.length > 0) {
-    const average = ratingValues.reduce((a, b) => a + b, 0) / ratingValues.length;
-    aggregated.averageRating = Number(average.toFixed(2));
-  }
+      // Rating average
+      if (ratingValues.length > 0) {
+        result.averageRating = Number((ratingValues.reduce((a, b) => a + b, 0) / ratingValues.length).toFixed(2));
+      }
 
-  // Open-ended
-  if (question.type === "open-ended") {
-    aggregated.openEndedResponses = openEnded;
-  }
+      // Open-ended responses
+      if (openEnded.length > 0) {
+        result.openEndedResponses = openEnded;
+      }
 
-  // Push ONLY for non-ranking questions
-  aggregatedResponses.push(aggregated);
-}
-    const totalRespondents = new Set(allResponses.map((r: any) => r.user_identifier)).size;
+      aggregatedResponses.push(result);
+    }
+
+    // === Demographics (unchanged) ===
+    const totalRespondents = totalUniqueVoters;
     const genderCounts = new Map<string, number>();
     const ageCounts = new Map<string, number>();
 
     allResponses.forEach((r: any) => {
-      if (r.respondent_gender) {
-        const g = String(r.respondent_gender);
-        genderCounts.set(g, (genderCounts.get(g) || 0) + 1);
-      }
+      if (r.respondent_gender) genderCounts.set(String(r.respondent_gender), (genderCounts.get(String(r.respondent_gender)) || 0) + 1);
       if (r.respondent_age) {
         const age = parseInt(r.respondent_age, 10);
-        let ageRange = "75+";
-        if (!isNaN(age)) {
-          if (age >= 18 && age <= 24) ageRange = "18-24";
-          else if (age >= 25 && age <= 34) ageRange = "25-34";
-          else if (age >= 35 && age <= 44) ageRange = "35-44";
-          else if (age >= 45 && age <= 54) ageRange = "45-54";
-          else if (age >= 55 && age <= 64) ageRange = "55-64";
-          else if (age >= 65 && age <= 74) ageRange = "65-74";
-        }
-        ageCounts.set(ageRange, (ageCounts.get(ageRange) || 0) + 1);
+        let range = "75+";
+        if (age >= 18 && age <= 24) range = "18-24";
+        else if (age >= 25 && age <= 34) range = "25-34";
+        else if (age >= 35 && age <= 44) range = "35-44";
+        else if (age >= 45 && age <= 54) range = "45-54";
+        else if (age >= 55 && age <= 64) range = "55-64";
+        else if (age >= 65 && age <= 74) range = "65-74";
+        ageCounts.set(range, (ageCounts.get(range) || 0) + 1);
       }
     });
 
-    const demographics: DemographicsData = {
+    const demographics: any = {
       gender: Array.from(genderCounts.entries()).map(([label, count]) => ({
-        label,
-        count,
-        percentage: totalRespondents > 0 ? Number(((count / totalRespondents) * 100).toFixed(2)) : 0,
+        label, count, percentage: totalRespondents > 0 ? Number(((count / totalRespondents) * 100).toFixed(1)) : 0
       })),
       ageRanges: Array.from(ageCounts.entries()).map(([label, count]) => ({
-        label,
-        count,
-        percentage: totalRespondents > 0 ? Number(((count / totalRespondents) * 100).toFixed(2)) : 0,
-      })).sort((a, b) => {
-        const order = ["18-24", "25-34", "35-44", "45-54", "55-64", "65-74", "75+"];
-        return order.indexOf(a.label) - order.indexOf(b.label);
-      }),
+        label, count, percentage: totalRespondents > 0 ? Number(((count / totalRespondents) * 100).toFixed(1)) : 0
+      })).sort((a, b) => ["18-24","25-34","35-44","45-54","55-64","65-74","75+"].indexOf(a.label) - ["18-24","25-34","35-44","45-54","55-64","65-74","75+"].indexOf(b.label)),
       totalRespondents,
     };
 
-    res.status(200).json({
+    res.json({
       poll: formattedPollData,
       aggregatedResponses,
       demographics,
-  location: locationResult.rows,
+      location: locationResult.rows,
     });
 
   } catch (error) {
     console.error("Error fetching poll results:", error);
-    res.status(500).json({ message: "Internal server error while fetching poll results." });
-  } 
+    res.status(500).json({ message: "Server error" });
+  }
 });
 router.delete("/:id", async (req, res) => {
   const pollId = parseInt(req.params.id);
