@@ -288,9 +288,7 @@ router.get("/:pollId/results", async (req, res) => {
          competitor_counts,
          open_ended_responses,
          rating_values,
-         ranking_counts,
-         gender_counts,
-         age_range_counts
+         ranking_counts
        FROM poll_responses_admin
        WHERE poll_id = $1`;
     
@@ -319,11 +317,6 @@ router.get("/:pollId/results", async (req, res) => {
     const adminResponsesResult = await pool.query(adminQuery, adminParams);
 
     const adminBulkData = new Map();
-    const adminDemographics = {
-      genderCounts: {} as { [key: string]: number },
-      ageRangeCounts: {} as { [key: string]: number },
-    };
-    
     adminResponsesResult.rows.forEach((row: any) => {
       adminBulkData.set(row.question_id, {
         optionCounts: row.option_counts || {},
@@ -332,8 +325,42 @@ router.get("/:pollId/results", async (req, res) => {
         ratingValues: row.rating_values || [],
         rankingCounts: row.ranking_counts || {},
       });
-      
-      // Aggregate demographics from all admin bulk responses
+    });
+
+    // === 2c. Load Admin Demographics (filtered by location) ===
+    let demographicsQuery = `SELECT 
+         gender_counts,
+         age_range_counts
+       FROM poll_demographics_admin
+       WHERE poll_id = $1`;
+    
+    const demographicsParams: any[] = [pollId];
+    let demoIndex = 2;
+
+    // Apply the same location filters
+    if (constituency && ward) {
+      demographicsQuery += ` AND (
+        (constituency IS NULL AND ward IS NULL) OR
+        (constituency = $${demoIndex} AND ward IS NULL) OR
+        (constituency = $${demoIndex + 1} AND ward = $${demoIndex + 2})
+      )`;
+      demographicsParams.push(constituency, constituency, ward);
+    } else if (constituency) {
+      demographicsQuery += ` AND (
+        (constituency IS NULL AND ward IS NULL) OR
+        (constituency = $${demoIndex} AND ward IS NULL)
+      )`;
+      demographicsParams.push(constituency);
+    }
+
+    const adminDemographicsResult = await pool.query(demographicsQuery, demographicsParams);
+
+    const adminDemographics = {
+      genderCounts: {} as { [key: string]: number },
+      ageRangeCounts: {} as { [key: string]: number },
+    };
+
+    adminDemographicsResult.rows.forEach((row: any) => {
       if (row.gender_counts) {
         Object.entries(row.gender_counts).forEach(([gender, count]) => {
           adminDemographics.genderCounts[gender] = (adminDemographics.genderCounts[gender] || 0) + (count as number);
@@ -692,8 +719,6 @@ router.post("/:pollId/admin-bulk-response", async (req, res) => {
     rankingCounts,
     constituency,
     ward,
-    genderCounts,
-    ageRangeCounts,
   } = req.body;
 
   if (isNaN(pollId) || !questionId) {
@@ -719,20 +744,16 @@ router.post("/:pollId/admin-bulk-response", async (req, res) => {
              open_ended_responses = $3,
              rating_values = $4,
              ranking_counts = $5,
-             gender_counts = $6,
-             age_range_counts = $7,
              updated_at = NOW()
-         WHERE poll_id = $8 AND question_id = $9
-         AND (constituency IS NOT DISTINCT FROM $10)
-         AND (ward IS NOT DISTINCT FROM $11)`,
+         WHERE poll_id = $6 AND question_id = $7
+         AND (constituency IS NOT DISTINCT FROM $8)
+         AND (ward IS NOT DISTINCT FROM $9)`,
         [
           JSON.stringify(optionCounts || {}),
           JSON.stringify(competitorCounts || {}),
           openEndedResponses || [],
           ratingValues || [],
           JSON.stringify(rankingCounts || {}),
-          JSON.stringify(genderCounts || {}),
-          JSON.stringify(ageRangeCounts || {}),
           pollId,
           questionId,
           constituency || null,
@@ -748,9 +769,8 @@ router.post("/:pollId/admin-bulk-response", async (req, res) => {
            poll_id, question_id,
            option_counts, competitor_counts,
            open_ended_responses, rating_values, ranking_counts,
-           gender_counts, age_range_counts,
            constituency, ward
-         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
         [
           pollId,
           questionId,
@@ -759,8 +779,6 @@ router.post("/:pollId/admin-bulk-response", async (req, res) => {
           openEndedResponses || [],
           ratingValues || [],
           JSON.stringify(rankingCounts || {}),
-          JSON.stringify(genderCounts || {}),
-          JSON.stringify(ageRangeCounts || {}),
           constituency || null,
           ward || null,
         ]
@@ -795,8 +813,6 @@ router.get("/:pollId/admin-bulk-responses", async (req, res) => {
          open_ended_responses,
          rating_values,
          ranking_counts,
-         gender_counts,
-         age_range_counts,
          constituency,
          ward,
          updated_at
@@ -828,6 +844,118 @@ router.get("/:pollId/admin-bulk-responses", async (req, res) => {
   } catch (error: any) {
     console.error("Error fetching admin bulk responses:", error);
     return res.status(500).json({ message: "Failed to fetch admin bulk responses." });
+  }
+});
+
+// === ADMIN DEMOGRAPHICS ENDPOINTS ===
+
+// Save or update admin demographics for a poll location
+router.post("/:pollId/admin-demographics", async (req, res) => {
+  const pollId = parseInt(req.params.pollId, 10);
+  const { genderCounts, ageRangeCounts, constituency, ward } = req.body;
+
+  if (isNaN(pollId)) {
+    return res.status(400).json({ message: "Invalid poll ID." });
+  }
+
+  try {
+    // Check if entry exists for this poll and location
+    const existing = await pool.query(
+      `SELECT id FROM poll_demographics_admin 
+       WHERE poll_id = $1 
+       AND (constituency IS NOT DISTINCT FROM $2) 
+       AND (ward IS NOT DISTINCT FROM $3)`,
+      [pollId, constituency || null, ward || null]
+    );
+
+    if (existing.rows.length > 0) {
+      // Update existing entry
+      await pool.query(
+        `UPDATE poll_demographics_admin
+         SET gender_counts = $1,
+             age_range_counts = $2,
+             updated_at = NOW()
+         WHERE poll_id = $3
+         AND (constituency IS NOT DISTINCT FROM $4)
+         AND (ward IS NOT DISTINCT FROM $5)`,
+        [
+          JSON.stringify(genderCounts || {}),
+          JSON.stringify(ageRangeCounts || {}),
+          pollId,
+          constituency || null,
+          ward || null,
+        ]
+      );
+
+      return res.json({ message: "Demographics updated successfully." });
+    } else {
+      // Insert new entry
+      await pool.query(
+        `INSERT INTO poll_demographics_admin (
+           poll_id, gender_counts, age_range_counts, constituency, ward
+         ) VALUES ($1, $2, $3, $4, $5)`,
+        [
+          pollId,
+          JSON.stringify(genderCounts || {}),
+          JSON.stringify(ageRangeCounts || {}),
+          constituency || null,
+          ward || null,
+        ]
+      );
+
+      return res.json({ message: "Demographics created successfully." });
+    }
+  } catch (error: any) {
+    console.error("Error saving demographics:", error);
+    return res.status(500).json({ message: error.message || "Failed to save demographics." });
+  }
+});
+
+// Get admin demographics for a poll location
+router.get("/:pollId/admin-demographics", async (req, res) => {
+  const pollId = parseInt(req.params.pollId, 10);
+  let { constituency, ward } = req.query;
+
+  if (isNaN(pollId)) {
+    return res.status(400).json({ message: "Invalid poll ID." });
+  }
+
+  // Handle array query params
+  if (Array.isArray(constituency)) constituency = constituency[0];
+  if (Array.isArray(ward)) ward = ward[0];
+
+  try {
+    let query = `SELECT 
+         gender_counts,
+         age_range_counts,
+         constituency,
+         ward,
+         updated_at
+       FROM poll_demographics_admin
+       WHERE poll_id = $1`;
+    
+    const params: any[] = [pollId];
+    let paramIndex = 2;
+
+    // Exact match for the selected location
+    if (constituency) {
+      if (ward) {
+        query += ` AND constituency = $${paramIndex} AND ward = $${paramIndex + 1}`;
+        params.push(constituency, ward);
+      } else {
+        query += ` AND constituency = $${paramIndex} AND ward IS NULL`;
+        params.push(constituency);
+      }
+    } else {
+      query += ` AND constituency IS NULL AND ward IS NULL`;
+    }
+
+    const result = await pool.query(query, params);
+
+    return res.json(result.rows.length > 0 ? result.rows[0] : null);
+  } catch (error: any) {
+    console.error("Error fetching demographics:", error);
+    return res.status(500).json({ message: "Failed to fetch demographics." });
   }
 });
 

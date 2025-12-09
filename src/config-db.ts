@@ -152,14 +152,25 @@ password TEXT NOT NULL
   open_ended_responses TEXT[] DEFAULT '{}',
   rating_values INTEGER[] DEFAULT '{}',
   ranking_counts JSONB DEFAULT '{}',
-  gender_counts JSONB DEFAULT '{}',
-  age_range_counts JSONB DEFAULT '{}',
   constituency VARCHAR(255),
   ward VARCHAR(255),
   created_at TIMESTAMP DEFAULT NOW(),
   updated_at TIMESTAMP DEFAULT NOW(),
   CONSTRAINT poll_responses_admin_poll_question_location_unique 
   UNIQUE(poll_id, question_id, constituency, ward)
+)
+`,
+`CREATE TABLE IF NOT EXISTS poll_demographics_admin (
+  id SERIAL PRIMARY KEY,
+  poll_id INTEGER NOT NULL REFERENCES polls(id) ON DELETE CASCADE,
+  gender_counts JSONB DEFAULT '{}',
+  age_range_counts JSONB DEFAULT '{}',
+  constituency VARCHAR(255),
+  ward VARCHAR(255),
+  created_at TIMESTAMP DEFAULT NOW(),
+  updated_at TIMESTAMP DEFAULT NOW(),
+  CONSTRAINT poll_demographics_admin_poll_location_unique 
+  UNIQUE(poll_id, constituency, ward)
 )
 `,
   ];
@@ -179,6 +190,11 @@ password TEXT NOT NULL
     await pool.query(`
       CREATE INDEX IF NOT EXISTS idx_admin_responses_location 
       ON poll_responses_admin(poll_id, constituency, ward)
+    `);
+
+    await pool.query(`
+      CREATE INDEX IF NOT EXISTS idx_demographics_admin_poll_location 
+      ON poll_demographics_admin(poll_id, constituency, ward)
     `);
 
     await insertAdmin();
