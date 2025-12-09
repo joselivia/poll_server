@@ -254,9 +254,12 @@ router.get("/:pollId/results", async (req, res) => {
     };
 
     // === 2. Load Responses ===
+    // Fetch locations from both poll_responses and poll_responses_admin
     const locationResult = await pool.query(
-      `SELECT DISTINCT region, county, constituency, ward FROM poll_responses WHERE poll_id = $1`,
-      [pollId]
+      `SELECT DISTINCT region, county, constituency, ward FROM poll_responses WHERE poll_id = $1
+       UNION
+       SELECT DISTINCT NULL as region, NULL as county, constituency, ward FROM poll_responses_admin WHERE poll_id = $2 AND (constituency IS NOT NULL OR ward IS NOT NULL)`,
+      [pollId, pollId]
     );
 
     const responsesResult = await pool.query(
@@ -278,21 +281,49 @@ router.get("/:pollId/results", async (req, res) => {
     // Total number of people who voted at all (used as fallback)
     const totalUniqueVoters = new Set(allResponses.map(r => String(r.user_identifier))).size;
 
-    // === 2b. Load Admin Bulk Responses ===
-    const adminResponsesResult = await pool.query(
-      `SELECT 
+    // === 2b. Load Admin Bulk Responses (filtered by location) ===
+    let adminQuery = `SELECT 
          question_id,
          option_counts,
          competitor_counts,
          open_ended_responses,
          rating_values,
-         ranking_counts
+         ranking_counts,
+         gender_counts,
+         age_range_counts
        FROM poll_responses_admin
-       WHERE poll_id = $1`,
-      [pollId]
-    );
+       WHERE poll_id = $1`;
+    
+    const adminParams: any[] = [pollId];
+
+    // Apply the same location filters as regular responses
+    // Include both NULL (general) data and location-specific data
+    if (constituency && ward) {
+      // When both are specified, get data for: NULL-NULL, constituency-NULL, and constituency-ward
+      adminQuery += ` AND (
+        (constituency IS NULL AND ward IS NULL) OR
+        (constituency = $2 AND ward IS NULL) OR
+        (constituency = $3 AND ward = $4)
+      )`;
+      adminParams.push(constituency, constituency, ward);
+    } else if (constituency) {
+      // When only constituency specified, get: NULL-NULL and constituency-NULL
+      adminQuery += ` AND (
+        (constituency IS NULL AND ward IS NULL) OR
+        (constituency = $2 AND ward IS NULL)
+      )`;
+      adminParams.push(constituency);
+    }
+    // If neither is specified, get all data (including location-specific)
+
+    const adminResponsesResult = await pool.query(adminQuery, adminParams);
 
     const adminBulkData = new Map();
+    const adminDemographics = {
+      genderCounts: {} as { [key: string]: number },
+      ageRangeCounts: {} as { [key: string]: number },
+    };
+    
     adminResponsesResult.rows.forEach((row: any) => {
       adminBulkData.set(row.question_id, {
         optionCounts: row.option_counts || {},
@@ -301,6 +332,19 @@ router.get("/:pollId/results", async (req, res) => {
         ratingValues: row.rating_values || [],
         rankingCounts: row.ranking_counts || {},
       });
+      
+      // Aggregate demographics from all admin bulk responses
+      if (row.gender_counts) {
+        Object.entries(row.gender_counts).forEach(([gender, count]) => {
+          adminDemographics.genderCounts[gender] = (adminDemographics.genderCounts[gender] || 0) + (count as number);
+        });
+      }
+      
+      if (row.age_range_counts) {
+        Object.entries(row.age_range_counts).forEach(([range, count]) => {
+          adminDemographics.ageRangeCounts[range] = (adminDemographics.ageRangeCounts[range] || 0) + (count as number);
+        });
+      }
     });
 
     const aggregatedResponses: any[] = [];
@@ -508,11 +552,11 @@ router.get("/:pollId/results", async (req, res) => {
       aggregatedResponses.push(result);
     }
 
-    // === Demographics (unchanged) ===
-    const totalRespondents = totalUniqueVoters;
+    // === Demographics (merge regular responses + admin bulk data) ===
     const genderCounts = new Map<string, number>();
     const ageCounts = new Map<string, number>();
 
+    // Count from regular responses
     allResponses.forEach((r: any) => {
       if (r.respondent_gender) genderCounts.set(String(r.respondent_gender), (genderCounts.get(String(r.respondent_gender)) || 0) + 1);
       if (r.respondent_age) {
@@ -527,6 +571,21 @@ router.get("/:pollId/results", async (req, res) => {
         ageCounts.set(range, (ageCounts.get(range) || 0) + 1);
       }
     });
+
+    // Merge admin bulk demographics
+    Object.entries(adminDemographics.genderCounts).forEach(([gender, count]) => {
+      genderCounts.set(gender, (genderCounts.get(gender) || 0) + count);
+    });
+
+    Object.entries(adminDemographics.ageRangeCounts).forEach(([range, count]) => {
+      ageCounts.set(range, (ageCounts.get(range) || 0) + count);
+    });
+
+    // Calculate total respondents from both sources
+    const totalFromRegular = totalUniqueVoters;
+    const totalFromAdmin = Object.values(adminDemographics.genderCounts).reduce((sum, count) => sum + count, 0) ||
+                           Object.values(adminDemographics.ageRangeCounts).reduce((sum, count) => sum + count, 0);
+    const totalRespondents = totalFromRegular + totalFromAdmin;
 
     const demographics: any = {
       gender: Array.from(genderCounts.entries()).map(([label, count]) => ({
@@ -631,6 +690,10 @@ router.post("/:pollId/admin-bulk-response", async (req, res) => {
     openEndedResponses,
     ratingValues,
     rankingCounts,
+    constituency,
+    ward,
+    genderCounts,
+    ageRangeCounts,
   } = req.body;
 
   if (isNaN(pollId) || !questionId) {
@@ -638,51 +701,72 @@ router.post("/:pollId/admin-bulk-response", async (req, res) => {
   }
 
   try {
-    // Check if entry exists
+    // Check if entry exists for this poll, question, constituency, and ward
     const existing = await pool.query(
-      `SELECT id FROM poll_responses_admin WHERE poll_id = $1 AND question_id = $2`,
-      [pollId, questionId]
+      `SELECT id FROM poll_responses_admin 
+       WHERE poll_id = $1 AND question_id = $2 
+       AND (constituency IS NOT DISTINCT FROM $3) 
+       AND (ward IS NOT DISTINCT FROM $4)`,
+      [pollId, questionId, constituency || null, ward || null]
     );
 
     if (existing.rows.length > 0) {
       // Update existing entry
       await pool.query(
-        `UPDATE poll_responses_admin 
-         SET option_counts = $1, 
-             competitor_counts = $2, 
-             open_ended_responses = $3, 
+        `UPDATE poll_responses_admin
+         SET option_counts = $1,
+             competitor_counts = $2,
+             open_ended_responses = $3,
              rating_values = $4,
              ranking_counts = $5,
+             gender_counts = $6,
+             age_range_counts = $7,
              updated_at = NOW()
-         WHERE poll_id = $6 AND question_id = $7`,
+         WHERE poll_id = $8 AND question_id = $9
+         AND (constituency IS NOT DISTINCT FROM $10)
+         AND (ward IS NOT DISTINCT FROM $11)`,
         [
-          optionCounts ? JSON.stringify(optionCounts) : '{}',
-          competitorCounts ? JSON.stringify(competitorCounts) : '{}',
+          JSON.stringify(optionCounts || {}),
+          JSON.stringify(competitorCounts || {}),
           openEndedResponses || [],
           ratingValues || [],
-          rankingCounts ? JSON.stringify(rankingCounts) : '{}',
+          JSON.stringify(rankingCounts || {}),
+          JSON.stringify(genderCounts || {}),
+          JSON.stringify(ageRangeCounts || {}),
           pollId,
           questionId,
+          constituency || null,
+          ward || null,
         ]
       );
-      return res.json({ message: "Admin bulk response updated successfully!" });
+
+      return res.json({ message: "Admin bulk response updated successfully." });
     } else {
       // Insert new entry
       await pool.query(
-        `INSERT INTO poll_responses_admin 
-         (poll_id, question_id, option_counts, competitor_counts, open_ended_responses, rating_values, ranking_counts)
-         VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+        `INSERT INTO poll_responses_admin (
+           poll_id, question_id,
+           option_counts, competitor_counts,
+           open_ended_responses, rating_values, ranking_counts,
+           gender_counts, age_range_counts,
+           constituency, ward
+         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
         [
           pollId,
           questionId,
-          optionCounts ? JSON.stringify(optionCounts) : '{}',
-          competitorCounts ? JSON.stringify(competitorCounts) : '{}',
+          JSON.stringify(optionCounts || {}),
+          JSON.stringify(competitorCounts || {}),
           openEndedResponses || [],
           ratingValues || [],
-          rankingCounts ? JSON.stringify(rankingCounts) : '{}',
+          JSON.stringify(rankingCounts || {}),
+          JSON.stringify(genderCounts || {}),
+          JSON.stringify(ageRangeCounts || {}),
+          constituency || null,
+          ward || null,
         ]
       );
-      return res.status(201).json({ message: "Admin bulk response submitted successfully!" });
+
+      return res.json({ message: "Admin bulk response created successfully." });
     }
   } catch (error: any) {
     console.error("Error submitting admin bulk response:", error);
@@ -693,25 +777,52 @@ router.post("/:pollId/admin-bulk-response", async (req, res) => {
 // Get admin bulk responses for a poll
 router.get("/:pollId/admin-bulk-responses", async (req, res) => {
   const pollId = parseInt(req.params.pollId, 10);
+  let { constituency, ward } = req.query;
 
   if (isNaN(pollId)) {
     return res.status(400).json({ message: "Invalid poll ID." });
   }
 
+  // Handle array query params
+  if (Array.isArray(constituency)) constituency = constituency[0];
+  if (Array.isArray(ward)) ward = ward[0];
+
   try {
-    const result = await pool.query(
-      `SELECT 
+    let query = `SELECT 
          question_id,
          option_counts,
          competitor_counts,
          open_ended_responses,
          rating_values,
          ranking_counts,
+         gender_counts,
+         age_range_counts,
+         constituency,
+         ward,
          updated_at
        FROM poll_responses_admin
-       WHERE poll_id = $1`,
-      [pollId]
-    );
+       WHERE poll_id = $1`;
+    
+    const params: any[] = [pollId];
+    let paramIndex = 2;
+
+    // Exact match for the selected location (including NULL matching)
+    if (constituency) {
+      query += ` AND constituency = $${paramIndex++}`;
+      params.push(constituency);
+      
+      if (ward) {
+        query += ` AND ward = $${paramIndex++}`;
+        params.push(ward);
+      } else {
+        query += ` AND ward IS NULL`;
+      }
+    } else {
+      // No constituency selected - fetch general data only (NULL-NULL)
+      query += ` AND constituency IS NULL AND ward IS NULL`;
+    }
+
+    const result = await pool.query(query, params);
 
     return res.json(result.rows);
   } catch (error: any) {

@@ -152,9 +152,14 @@ password TEXT NOT NULL
   open_ended_responses TEXT[] DEFAULT '{}',
   rating_values INTEGER[] DEFAULT '{}',
   ranking_counts JSONB DEFAULT '{}',
+  gender_counts JSONB DEFAULT '{}',
+  age_range_counts JSONB DEFAULT '{}',
+  constituency VARCHAR(255),
+  ward VARCHAR(255),
   created_at TIMESTAMP DEFAULT NOW(),
   updated_at TIMESTAMP DEFAULT NOW(),
-  UNIQUE(poll_id, question_id)
+  CONSTRAINT poll_responses_admin_poll_question_location_unique 
+  UNIQUE(poll_id, question_id, constituency, ward)
 )
 `,
   ];
@@ -165,10 +170,15 @@ password TEXT NOT NULL
     }
     console.log("✅ All tables are created successfully!");
     
-    // Create index for faster lookups
+    // Create indexes for faster lookups
     await pool.query(`
       CREATE INDEX IF NOT EXISTS idx_admin_responses_poll_question 
       ON poll_responses_admin(poll_id, question_id)
+    `);
+    
+    await pool.query(`
+      CREATE INDEX IF NOT EXISTS idx_admin_responses_location 
+      ON poll_responses_admin(poll_id, constituency, ward)
     `);
 
     await insertAdmin();
