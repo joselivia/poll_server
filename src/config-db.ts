@@ -143,6 +143,20 @@ password TEXT NOT NULL
  created_at TIMESTAMP DEFAULT NOW()
 )
 `,
+`CREATE TABLE IF NOT EXISTS poll_responses_admin (
+  id SERIAL PRIMARY KEY,
+  poll_id INTEGER NOT NULL REFERENCES polls(id) ON DELETE CASCADE,
+  question_id INTEGER NOT NULL REFERENCES poll_questions(id) ON DELETE CASCADE,
+  option_counts JSONB DEFAULT '{}',
+  competitor_counts JSONB DEFAULT '{}',
+  open_ended_responses TEXT[] DEFAULT '{}',
+  rating_values INTEGER[] DEFAULT '{}',
+  ranking_counts JSONB DEFAULT '{}',
+  created_at TIMESTAMP DEFAULT NOW(),
+  updated_at TIMESTAMP DEFAULT NOW(),
+  UNIQUE(poll_id, question_id)
+)
+`,
   ];
 
   try {
@@ -150,6 +164,12 @@ password TEXT NOT NULL
       await pool.query(query);
     }
     console.log("✅ All tables are created successfully!");
+    
+    // Create index for faster lookups
+    await pool.query(`
+      CREATE INDEX IF NOT EXISTS idx_admin_responses_poll_question 
+      ON poll_responses_admin(poll_id, question_id)
+    `);
 
     await insertAdmin();
   } catch (error: Error | any) {

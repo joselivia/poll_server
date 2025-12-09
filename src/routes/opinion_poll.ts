@@ -278,6 +278,31 @@ router.get("/:pollId/results", async (req, res) => {
     // Total number of people who voted at all (used as fallback)
     const totalUniqueVoters = new Set(allResponses.map(r => String(r.user_identifier))).size;
 
+    // === 2b. Load Admin Bulk Responses ===
+    const adminResponsesResult = await pool.query(
+      `SELECT 
+         question_id,
+         option_counts,
+         competitor_counts,
+         open_ended_responses,
+         rating_values,
+         ranking_counts
+       FROM poll_responses_admin
+       WHERE poll_id = $1`,
+      [pollId]
+    );
+
+    const adminBulkData = new Map();
+    adminResponsesResult.rows.forEach((row: any) => {
+      adminBulkData.set(row.question_id, {
+        optionCounts: row.option_counts || {},
+        competitorCounts: row.competitor_counts || {},
+        openEndedResponses: row.open_ended_responses || [],
+        ratingValues: row.rating_values || [],
+        rankingCounts: row.ranking_counts || {},
+      });
+    });
+
     const aggregatedResponses: any[] = [];
 
     // === 3. Process Each Question ===
@@ -354,7 +379,37 @@ router.get("/:pollId/results", async (req, res) => {
         }
       }
 
-      // === RANKING QUESTIONS (unchanged) ===
+      // === MERGE ADMIN BULK DATA ===
+      const adminData = adminBulkData.get(question.id);
+      if (adminData) {
+        // Merge option counts
+        if (adminData.optionCounts && Object.keys(adminData.optionCounts).length > 0) {
+          Object.entries(adminData.optionCounts).forEach(([id, count]) => {
+            const optionId = parseInt(id);
+            optionCounts.set(optionId, (optionCounts.get(optionId) || 0) + (count as number));
+          });
+        }
+
+        // Merge competitor counts
+        if (adminData.competitorCounts && Object.keys(adminData.competitorCounts).length > 0) {
+          Object.entries(adminData.competitorCounts).forEach(([id, count]) => {
+            const competitorId = parseInt(id);
+            competitorCounts.set(competitorId, (competitorCounts.get(competitorId) || 0) + (count as number));
+          });
+        }
+
+        // Merge open-ended responses
+        if (adminData.openEndedResponses && adminData.openEndedResponses.length > 0) {
+          openEnded.push(...adminData.openEndedResponses);
+        }
+
+        // Merge rating values
+        if (adminData.ratingValues && adminData.ratingValues.length > 0) {
+          ratingValues.push(...adminData.ratingValues);
+        }
+      }
+
+      // === RANKING QUESTIONS ===
       if (question.type === "ranking") {
         const rankingQuery = await pool.query(`
           SELECT po.id, po.option_text AS label, pr.rank_position, COUNT(*) AS count
@@ -373,6 +428,30 @@ router.get("/:pollId/results", async (req, res) => {
             id: parseInt(row.id),
             label: row.label,
             count: parseInt(row.count),
+          });
+        }
+
+        // Merge admin ranking data
+        if (adminData && adminData.rankingCounts && Object.keys(adminData.rankingCounts).length > 0) {
+          Object.entries(adminData.rankingCounts).forEach(([optionIdStr, ranks]: [string, any]) => {
+            const optionId = parseInt(optionIdStr);
+            const optionLabel = question.options.find((o: any) => o.id === optionId)?.optionText || "Unknown";
+            
+            Object.entries(ranks).forEach(([rankKey, count]: [string, any]) => {
+              const rankPosition = parseInt(rankKey.replace('rank_', ''));
+              if (!rankingsByPosition.has(rankPosition)) rankingsByPosition.set(rankPosition, []);
+              
+              const existing = rankingsByPosition.get(rankPosition)!.find(r => r.id === optionId);
+              if (existing) {
+                existing.count += count;
+              } else {
+                rankingsByPosition.get(rankPosition)!.push({
+                  id: optionId,
+                  label: optionLabel,
+                  count: count,
+                });
+              }
+            });
           });
         }
 
@@ -539,4 +618,106 @@ router.delete("/:id", async (req, res) => {
 //     res.status(500).json({ message: "Failed to fetch published polls" });
 //   }
 // });
+
+// === ADMIN BULK RESPONSES ===
+
+// Submit or update admin bulk response for a specific question
+router.post("/:pollId/admin-bulk-response", async (req, res) => {
+  const pollId = parseInt(req.params.pollId, 10);
+  const {
+    questionId,
+    optionCounts,
+    competitorCounts,
+    openEndedResponses,
+    ratingValues,
+    rankingCounts,
+  } = req.body;
+
+  if (isNaN(pollId) || !questionId) {
+    return res.status(400).json({ message: "Invalid poll ID or question ID." });
+  }
+
+  try {
+    // Check if entry exists
+    const existing = await pool.query(
+      `SELECT id FROM poll_responses_admin WHERE poll_id = $1 AND question_id = $2`,
+      [pollId, questionId]
+    );
+
+    if (existing.rows.length > 0) {
+      // Update existing entry
+      await pool.query(
+        `UPDATE poll_responses_admin 
+         SET option_counts = $1, 
+             competitor_counts = $2, 
+             open_ended_responses = $3, 
+             rating_values = $4,
+             ranking_counts = $5,
+             updated_at = NOW()
+         WHERE poll_id = $6 AND question_id = $7`,
+        [
+          optionCounts ? JSON.stringify(optionCounts) : '{}',
+          competitorCounts ? JSON.stringify(competitorCounts) : '{}',
+          openEndedResponses || [],
+          ratingValues || [],
+          rankingCounts ? JSON.stringify(rankingCounts) : '{}',
+          pollId,
+          questionId,
+        ]
+      );
+      return res.json({ message: "Admin bulk response updated successfully!" });
+    } else {
+      // Insert new entry
+      await pool.query(
+        `INSERT INTO poll_responses_admin 
+         (poll_id, question_id, option_counts, competitor_counts, open_ended_responses, rating_values, ranking_counts)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+        [
+          pollId,
+          questionId,
+          optionCounts ? JSON.stringify(optionCounts) : '{}',
+          competitorCounts ? JSON.stringify(competitorCounts) : '{}',
+          openEndedResponses || [],
+          ratingValues || [],
+          rankingCounts ? JSON.stringify(rankingCounts) : '{}',
+        ]
+      );
+      return res.status(201).json({ message: "Admin bulk response submitted successfully!" });
+    }
+  } catch (error: any) {
+    console.error("Error submitting admin bulk response:", error);
+    return res.status(500).json({ message: error.message || "Failed to submit admin bulk response." });
+  }
+});
+
+// Get admin bulk responses for a poll
+router.get("/:pollId/admin-bulk-responses", async (req, res) => {
+  const pollId = parseInt(req.params.pollId, 10);
+
+  if (isNaN(pollId)) {
+    return res.status(400).json({ message: "Invalid poll ID." });
+  }
+
+  try {
+    const result = await pool.query(
+      `SELECT 
+         question_id,
+         option_counts,
+         competitor_counts,
+         open_ended_responses,
+         rating_values,
+         ranking_counts,
+         updated_at
+       FROM poll_responses_admin
+       WHERE poll_id = $1`,
+      [pollId]
+    );
+
+    return res.json(result.rows);
+  } catch (error: any) {
+    console.error("Error fetching admin bulk responses:", error);
+    return res.status(500).json({ message: "Failed to fetch admin bulk responses." });
+  }
+});
+
 export default router;

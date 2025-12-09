@@ -5,7 +5,7 @@ import { pool } from "../config-db";
 const router = express.Router();
 const upload = multer({ storage: multer.memoryStorage() });
 interface PollOption {
-  id?: number ;
+  id?: number;
   optionText?: string;
   text?: string;
 }
@@ -197,45 +197,51 @@ router.put("/updateQuiz/:id", upload.any(), async (req, res) => {
         );
 
         if (isChoice) {
-          // fetch existing options
+          // Fetch existing options
           const existingOptionsRes = await pool.query(
-            `SELECT id, option_text FROM poll_options WHERE question_id = $1`,
+            `SELECT id FROM poll_options WHERE question_id = $1`,
             [questionIdNum]
           );
-          const existingOptions = existingOptionsRes.rows;
+          const existingOptionIds = existingOptionsRes.rows.map((r) => r.id);
 
-          // Track which options were matched
-          const matchedOptionIds: number[] = [];
+          // Parse incoming option IDs as numbers
+          const incomingOptions = (q.options || []).map(opt => {
+            if (typeof opt === "string") {
+              return { id: null, text: opt };
+            }
+            const optionId = opt.id ? (typeof opt.id === 'string' ? parseInt(opt.id, 10) : opt.id) : null;
+            return {
+              id: optionId && !isNaN(optionId) ? optionId : null,
+              text: opt.optionText || opt.text || ""
+            };
+          });
 
-          for (const text of optionsToUse) {
-            const match = existingOptions.find(
-              (o) =>
-                o.option_text.trim().toLowerCase() ===
-                text.trim().toLowerCase()
-            );
+          const incomingOptionIds = incomingOptions
+            .filter(opt => opt.id !== null)
+            .map(opt => opt.id) as number[];
 
-            if (match) {
-              matchedOptionIds.push(match.id);
+          // Delete options that are no longer in the incoming data
+          const optionsToDelete = existingOptionIds.filter(id => !incomingOptionIds.includes(id));
+          for (const optId of optionsToDelete) {
+            await pool.query(`DELETE FROM poll_options WHERE id = $1`, [optId]);
+          }
+
+          // Update existing options or insert new ones
+          for (const opt of incomingOptions) {
+            if (opt.id && existingOptionIds.includes(opt.id)) {
+              // Update existing option
               await pool.query(
                 `UPDATE poll_options SET option_text=$1 WHERE id=$2`,
-                [text, match.id]
+                [opt.text, opt.id]
               );
             } else {
+              // Insert new option
               await pool.query(
                 `INSERT INTO poll_options (question_id, option_text)
                  VALUES ($1, $2)`,
-                [questionIdNum, text]
+                [questionIdNum, opt.text]
               );
             }
-          }
-
-          // Delete options that are no longer present
-          const optionsToDeleteIds = existingOptions
-            .filter(opt => !matchedOptionIds.includes(opt.id))
-            .map(opt => opt.id);
-          
-          for (const optId of optionsToDeleteIds) {
-            await pool.query(`DELETE FROM poll_options WHERE id = $1`, [optId]);
           }
         }
       } else {
