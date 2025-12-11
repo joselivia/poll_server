@@ -592,6 +592,8 @@ router.get("/:pollId/results", async (req, res) => {
           const weightedSum = Array.from(counts.entries()).reduce((sum, [rating, count]) => sum + (rating * count), 0);
           result.averageRating = total > 0 ? Number((weightedSum / total).toFixed(2)) : 0;
           result.ratingValues = total;
+          // Update totalResponses to include admin bulk data for rating questions
+          result.totalResponses = total;
         }
       }
 
