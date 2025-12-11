@@ -305,10 +305,10 @@ router.get("/:pollId/results", async (req, res) => {
       )`;
       adminParams.push(constituency, constituency, ward);
     } else if (constituency) {
-      // When only constituency specified, get: NULL-NULL and constituency-NULL
+      // When only constituency specified, get: NULL-NULL, constituency-NULL, and all constituency-ward combinations
       adminQuery += ` AND (
         (constituency IS NULL AND ward IS NULL) OR
-        (constituency = $2 AND ward IS NULL)
+        (constituency = $2)
       )`;
       adminParams.push(constituency);
     }
@@ -348,7 +348,7 @@ router.get("/:pollId/results", async (req, res) => {
     } else if (constituency) {
       demographicsQuery += ` AND (
         (constituency IS NULL AND ward IS NULL) OR
-        (constituency = $${demoIndex} AND ward IS NULL)
+        (constituency = $${demoIndex})
       )`;
       demographicsParams.push(constituency);
     }
