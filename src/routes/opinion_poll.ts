@@ -381,7 +381,6 @@ router.get("/:pollId/results", async (req, res) => {
       const optionCounts = new Map<number, number>();
       const competitorCounts = new Map<number, number>();
       const openEnded: string[] = [];
-      const ratingValues: number[] = [];
       const answeredUsers = new Set<string>();
 
       for (const r of allResponses) {
@@ -434,12 +433,16 @@ router.get("/:pollId/results", async (req, res) => {
             const match = r.rating.find((x: any) => x?.questionId === question.id);
             if (match?.rating != null) {
               answered = true;
-              ratingValues.push(Number(match.rating));
+              const ratingValue = Number(match.rating);
+              // Treat each rating as a choice
+              optionCounts.set(ratingValue, (optionCounts.get(ratingValue) || 0) + 1);
             }
             // Fallback for old flat rating arrays
             else if (r.rating.length > 0) {
               answered = true;
-              ratingValues.push(...r.rating.filter((n: any) => typeof n === "number"));
+              r.rating.filter((n: any) => typeof n === "number").forEach((rating: number) => {
+                optionCounts.set(rating, (optionCounts.get(rating) || 0) + 1);
+              });
             }
           }
         }
@@ -453,7 +456,7 @@ router.get("/:pollId/results", async (req, res) => {
       // === MERGE ADMIN BULK DATA ===
       const adminData = adminBulkData.get(question.id);
       if (adminData) {
-        // Merge option counts
+        // Merge option counts (now also used for rating)
         if (adminData.optionCounts && Object.keys(adminData.optionCounts).length > 0) {
           Object.entries(adminData.optionCounts).forEach(([id, count]) => {
             const optionId = parseInt(id);
@@ -472,11 +475,6 @@ router.get("/:pollId/results", async (req, res) => {
         // Merge open-ended responses
         if (adminData.openEndedResponses && adminData.openEndedResponses.length > 0) {
           openEnded.push(...adminData.openEndedResponses);
-        }
-
-        // Merge rating values
-        if (adminData.ratingValues && adminData.ratingValues.length > 0) {
-          ratingValues.push(...adminData.ratingValues);
         }
       }
 
@@ -552,23 +550,49 @@ router.get("/:pollId/results", async (req, res) => {
         totalResponses: answeredUsers.size,
       };
 
-      // Choices
+      // Choices (including rating counts)
       if (optionCounts.size > 0 || competitorCounts.size > 0) {
         const counts = optionCounts.size > 0 ? optionCounts : competitorCounts;
         const total = Array.from(counts.values()).reduce((a, b) => a + b, 0);
-        result.choices = Array.from(counts.entries()).map(([id, count]) => ({
-          id,
-          label: optionCounts.has(id)
-            ? question.options.find((o: any) => o.id === id)?.optionText || "Unknown"
-            : formattedPollData.competitors.find((c: any) => c.id === id)?.name || "Unknown",
-          count,
-          percentage: total > 0 ? Number(((count / total) * 100).toFixed(1)) : 0,
-        }));
-      }
+        
+        result.choices = Array.from(counts.entries()).map(([id, count]) => {
+          let label;
+          if (question.type === "rating") {
+            // For rating questions, id is the rating value (1-5)
+            const ratingLabels: { [key: number]: string } = {
+              1: 'Very Poor',
+              2: 'Poor',
+              3: 'Fair',
+              4: 'Good',
+              5: 'Excellent'
+            };
+            label = ratingLabels[id] || `Rating ${id}`;
+          } else if (optionCounts.has(id)) {
+            label = question.options.find((o: any) => o.id === id)?.optionText || "Unknown";
+          } else {
+            label = formattedPollData.competitors.find((c: any) => c.id === id)?.name || "Unknown";
+          }
+          
+          return {
+            id,
+            label,
+            count,
+            percentage: total > 0 ? Number(((count / total) * 100).toFixed(1)) : 0,
+          };
+        }).sort((a, b) => {
+          // Sort ratings by value (1-5), others by count descending
+          if (question.type === "rating") {
+            return a.id - b.id;
+          }
+          return b.count - a.count;
+        });
 
-      // Rating average
-      if (ratingValues.length > 0) {
-        result.averageRating = Number((ratingValues.reduce((a, b) => a + b, 0) / ratingValues.length).toFixed(2));
+        // Calculate average rating if it's a rating question
+        if (question.type === "rating") {
+          const weightedSum = Array.from(counts.entries()).reduce((sum, [rating, count]) => sum + (rating * count), 0);
+          result.averageRating = total > 0 ? Number((weightedSum / total).toFixed(2)) : 0;
+          result.ratingValues = total;
+        }
       }
 
       // Open-ended responses
