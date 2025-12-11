@@ -316,15 +316,58 @@ router.get("/:pollId/results", async (req, res) => {
 
     const adminResponsesResult = await pool.query(adminQuery, adminParams);
 
+    // Aggregate all admin bulk data for each question (may have multiple rows per question for different locations)
     const adminBulkData = new Map();
     adminResponsesResult.rows.forEach((row: any) => {
-      adminBulkData.set(row.question_id, {
-        optionCounts: row.option_counts || {},
-        competitorCounts: row.competitor_counts || {},
-        openEndedResponses: row.open_ended_responses || [],
-        ratingValues: row.rating_values || [],
-        rankingCounts: row.ranking_counts || {},
-      });
+      const questionId = row.question_id;
+      
+      if (!adminBulkData.has(questionId)) {
+        adminBulkData.set(questionId, {
+          optionCounts: {},
+          competitorCounts: {},
+          openEndedResponses: [],
+          ratingValues: [],
+          rankingCounts: {},
+        });
+      }
+      
+      const existing = adminBulkData.get(questionId);
+      
+      // Merge option counts
+      if (row.option_counts) {
+        Object.entries(row.option_counts).forEach(([id, count]) => {
+          existing.optionCounts[id] = (existing.optionCounts[id] || 0) + (count as number);
+        });
+      }
+      
+      // Merge competitor counts
+      if (row.competitor_counts) {
+        Object.entries(row.competitor_counts).forEach(([id, count]) => {
+          existing.competitorCounts[id] = (existing.competitorCounts[id] || 0) + (count as number);
+        });
+      }
+      
+      // Merge open-ended responses
+      if (row.open_ended_responses && Array.isArray(row.open_ended_responses)) {
+        existing.openEndedResponses.push(...row.open_ended_responses);
+      }
+      
+      // Merge rating values
+      if (row.rating_values && Array.isArray(row.rating_values)) {
+        existing.ratingValues.push(...row.rating_values);
+      }
+      
+      // Merge ranking counts
+      if (row.ranking_counts) {
+        Object.entries(row.ranking_counts).forEach(([optionId, ranks]: [string, any]) => {
+          if (!existing.rankingCounts[optionId]) {
+            existing.rankingCounts[optionId] = {};
+          }
+          Object.entries(ranks).forEach(([rankKey, count]: [string, any]) => {
+            existing.rankingCounts[optionId][rankKey] = (existing.rankingCounts[optionId][rankKey] || 0) + (count as number);
+          });
+        });
+      }
     });
 
     // === 2c. Load Admin Demographics (filtered by location) ===
