@@ -1,5 +1,6 @@
 import express from "express";
 import cors from "cors";
+import path from "path";
 import pollRoutes from "./routes/polls";
 import postRoutes from "./routes/posts";
 import pool from "./config-db";
@@ -11,6 +12,7 @@ import comments from "./routes/comments";
 import liveVotes from "./routes/votehistory";
 import opinionsPolls from "./routes/opinion_poll";
 import sendOtp from "./routes/utilities/auth_admin";
+import uploadRoutes from "./routes/upload";
 
 dotenv.config();
 
@@ -22,6 +24,9 @@ const port = process.env.PORT || 8082;
 app.use(cors());
 app.use(express.json());
 
+// Serve uploaded files statically
+app.use("/uploads", express.static(path.join(__dirname, "../uploads")));
+
 app.use("/api/polls", pollRoutes);
 app.use("/api/blogs", postRoutes);
 app.use("/api/aspirant", aspirant);
@@ -31,6 +36,7 @@ app.use("/api/comments", comments);
 app.use("/api/live-votes", liveVotes);
 app.use("/api/Opinions", opinionsPolls);
 app.use("/api/admin", sendOtp);
+app.use("/api/upload", uploadRoutes);
 
 pool.query("SELECT NOW()", (err, res) => {
   if (err) {

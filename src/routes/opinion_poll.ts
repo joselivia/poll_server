@@ -16,7 +16,7 @@ interface Option {
 
 interface Question {
   id: number;
-  type: 'multi-choice'| 'single-choice' | 'open-ended' | 'yes-no-notsure' | 'rating' | 'ranking';
+  type: 'multi-choice'| 'single-choice' | 'open-ended' | 'yes-no-notsure' | 'rating' | 'ranking' | 'image-upload' | 'audio-recording';
   questionText: string;
   options?: Option[];
   isCompetitorQuestion?: boolean;
@@ -35,7 +35,7 @@ interface PollData {
 interface AggregatedResponse {
   questionId: number;
   questionText: string;
-  type: 'single-choice'| 'multi-choice' | 'open-ended' | 'yes-no-notsure' | 'rating' | 'ranking';
+  type: 'single-choice'| 'multi-choice' | 'open-ended' | 'yes-no-notsure' | 'rating' | 'ranking' | 'image-upload' | 'audio-recording';
   isCompetitorQuestion?: boolean;
   totalResponses: number;
   choices?: {
@@ -49,6 +49,8 @@ interface AggregatedResponse {
   averageRating?: number; 
   ratingValues?: number;
   rankingData?: any[];
+  imageUrls?: string[];
+  audioUrls?: string[];
 }
 
 interface DemographicsData {
@@ -102,6 +104,8 @@ router.post("/:pollId/vote", async (req, res) => {
     const selectedCompetitorIds: number[] = [];
     const openEndedResponses: { questionId: number; response: string }[] = [];
     const ratingResponses: { questionId: number; rating: number }[] = [];
+    const imageUploads: { questionId: number; url: string }[] = [];
+    const audioRecordings: { questionId: number; url: string }[] = [];
 
     for (const r of responses) {
       // Skip ranking — already saved above
@@ -139,6 +143,21 @@ router.post("/:pollId/vote", async (req, res) => {
         });
       }
       
+      // Image upload
+      if (r.imageUrl?.trim()) {
+        imageUploads.push({
+          questionId: r.questionId,
+          url: r.imageUrl.trim(),
+        });
+      }
+      
+      // Audio recording
+      if (r.audioUrl?.trim()) {
+        audioRecordings.push({
+          questionId: r.questionId,
+          url: r.audioUrl.trim(),
+        });
+      }
     }
     await client.query(
       `
@@ -146,9 +165,10 @@ router.post("/:pollId/vote", async (req, res) => {
         poll_id, user_identifier,
         selected_option_ids, selected_competitor_ids,
         open_ended_responses, rating,
+        image_uploads, audio_recordings,
         respondent_name, respondent_age, respondent_gender,
         region, county, constituency, ward
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
       `,
       [
         pollId,
@@ -157,6 +177,8 @@ router.post("/:pollId/vote", async (req, res) => {
         selectedCompetitorIds.length > 0 ? selectedCompetitorIds : null,
         openEndedResponses.length > 0 ? openEndedResponses : null,
 ratingResponses.length > 0 ? ratingResponses : null,
+        imageUploads.length > 0 ? JSON.stringify(imageUploads) : null,
+        audioRecordings.length > 0 ? JSON.stringify(audioRecordings) : null,
             respondentName || null,
         respondentAge ? parseInt(respondentAge, 10) : null,
         respondentGender || null,
@@ -269,6 +291,8 @@ router.get("/:pollId/results", async (req, res) => {
          selected_competitor_ids,
          open_ended_responses,
          rating,
+         image_uploads,
+         audio_recordings,
          respondent_gender,
          respondent_age
        FROM poll_responses
@@ -424,6 +448,8 @@ router.get("/:pollId/results", async (req, res) => {
       const optionCounts = new Map<number, number>();
       const competitorCounts = new Map<number, number>();
       const openEnded: string[] = [];
+      const imageUrls: string[] = [];
+      const audioUrls: string[] = [];
       const answeredUsers = new Set<string>();
 
       for (const r of allResponses) {
@@ -467,6 +493,24 @@ router.get("/:pollId/results", async (req, res) => {
           if (match) {
             answered = true;
             openEnded.push(match.response.trim());
+          }
+        }
+
+        // === IMAGE UPLOAD ===
+        if (question.type === "image-upload" && Array.isArray(r.image_uploads)) {
+          const match = r.image_uploads.find((x: any) => x?.questionId === question.id && x?.url?.trim());
+          if (match) {
+            answered = true;
+            imageUrls.push(match.url.trim());
+          }
+        }
+
+        // === AUDIO RECORDING ===
+        if (question.type === "audio-recording" && Array.isArray(r.audio_recordings)) {
+          const match = r.audio_recordings.find((x: any) => x?.questionId === question.id && x?.url?.trim());
+          if (match) {
+            answered = true;
+            audioUrls.push(match.url.trim());
           }
         }
 
@@ -643,6 +687,16 @@ router.get("/:pollId/results", async (req, res) => {
       // Open-ended responses
       if (openEnded.length > 0) {
         result.openEndedResponses = openEnded;
+      }
+
+      // Image URLs
+      if (imageUrls.length > 0) {
+        result.imageUrls = imageUrls;
+      }
+
+      // Audio URLs
+      if (audioUrls.length > 0) {
+        result.audioUrls = audioUrls;
       }
 
       aggregatedResponses.push(result);

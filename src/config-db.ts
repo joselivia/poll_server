@@ -99,6 +99,8 @@ const createTables = async () => {
     selected_competitor_ids INT[],
     open_ended_responses jsonb[],
     rating jsonb[],
+    image_uploads JSONB,
+    audio_recordings JSONB,
     voted_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 `,
@@ -152,6 +154,8 @@ password TEXT NOT NULL
   open_ended_responses TEXT[] DEFAULT '{}',
   rating_values INTEGER[] DEFAULT '{}',
   ranking_counts JSONB DEFAULT '{}',
+  image_urls JSONB,
+  audio_urls JSONB,
   constituency VARCHAR(255),
   ward VARCHAR(255),
   created_at TIMESTAMP DEFAULT NOW(),
