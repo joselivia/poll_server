@@ -119,7 +119,22 @@ router.get("/:id", async (req, res) => {
       [pollId]
     );
 
-    if (voteResults.rows.length === 0) {
+    // === Load Admin Bulk Votes ===
+    const adminVotesResult = await pool.query(
+      `SELECT competitor_id, SUM(vote_count) AS admin_vote_count
+       FROM votes_admin
+       WHERE poll_id = $1
+       GROUP BY competitor_id`,
+      [pollId]
+    );
+
+    // Create a map of admin votes by competitor ID
+    const adminVotesMap = new Map<number, number>();
+    adminVotesResult.rows.forEach((row: any) => {
+      adminVotesMap.set(row.competitor_id, parseInt(row.admin_vote_count));
+    });
+
+    if (voteResults.rows.length === 0 && adminVotesMap.size === 0) {
       return res.status(200).json({
         ...poll,
         results: [],
@@ -128,28 +143,66 @@ router.get("/:id", async (req, res) => {
       });
     }
 
-    const totalValidVotes = voteResults.rows.reduce(
-      (sum, row) => sum + parseInt(row.vote_count),
+    // Merge individual votes with admin bulk votes
+    const mergedVotes = new Map<number, { name: string; voteCount: number }>();
+    
+    voteResults.rows.forEach((row) => {
+      const individualCount = parseInt(row.vote_count);
+      const adminCount = adminVotesMap.get(row.id) || 0;
+      mergedVotes.set(row.id, {
+        name: row.name,
+        voteCount: individualCount + adminCount,
+      });
+    });
+
+    // Add any competitors that only have admin votes
+    adminVotesMap.forEach((adminCount, competitorId) => {
+      if (!mergedVotes.has(competitorId)) {
+        const competitor = competitorsMap.get(competitorId);
+        if (competitor) {
+          mergedVotes.set(competitorId, {
+            name: competitor.name,
+            voteCount: adminCount,
+          });
+        }
+      }
+    });
+
+    const totalValidVotes = Array.from(mergedVotes.values()).reduce(
+      (sum, data) => sum + data.voteCount,
       0
     );
 
-    const votesresults = voteResults.rows.map((row) => {
-      const candidate = competitorsMap.get(row.id);
-      const voteCount = parseInt(row.vote_count);
+    const votesresults = Array.from(mergedVotes.entries()).map(([id, data]) => {
+      const candidate = competitorsMap.get(id);
       const percentage =
         totalValidVotes > 0
-          ? ((voteCount / totalValidVotes) * 100).toFixed(2)
+          ? ((data.voteCount / totalValidVotes) * 100).toFixed(2)
           : "0.00";
 
       return {
-        id: row.id,
-        name: row.name,
+        id,
+        name: data.name,
         party: candidate?.party || "No Party",
         profile: candidate?.profile || null,
-        voteCount,
+        voteCount: data.voteCount,
         percentage,
       };
-    });
+    }).sort((a, b) => b.voteCount - a.voteCount);
+
+    // Calculate total votes including admin bulk votes
+    const individualVoteCount = await pool.query(
+      `SELECT COUNT(*) as count FROM votes WHERE poll_id = $1`,
+      [pollId]
+    );
+    const adminBulkVoteCount = await pool.query(
+      `SELECT COALESCE(SUM(vote_count), 0) as count FROM votes_admin WHERE poll_id = $1`,
+      [pollId]
+    );
+    
+    const totalVotesIncludingBulk = 
+      parseInt(individualVoteCount.rows[0].count) + 
+      parseInt(adminBulkVoteCount.rows[0].count);
 
     const response = {
       id: poll.id,
@@ -160,7 +213,7 @@ router.get("/:id", async (req, res) => {
       county: poll.county,
       constituency: poll.constituency,
       ward: poll.ward ,
-      totalVotes: poll.total_votes || 0,
+      totalVotes: totalVotesIncludingBulk,
       spoiled_votes: poll.spoiled_votes || 0,
       voting_expires_at: poll.voting_expires_at,
       created_at: poll.created_at,
@@ -377,6 +430,130 @@ router.put("/:id/publish", async (req, res) => {
   } catch (error) {
     console.error("Error updating publish status:", error);
     res.status(500).json({ message: "Failed to update publish status" });
+  }
+});
+
+// === ADMIN BULK VOTES ===
+
+// Submit or update admin bulk votes for competitors
+router.post("/:pollId/admin-bulk-votes", async (req, res) => {
+  const pollId = parseInt(req.params.pollId, 10);
+  const { votes, constituency, ward } = req.body;
+
+  if (isNaN(pollId) || !Array.isArray(votes)) {
+    return res.status(400).json({ message: "Invalid poll ID or votes data." });
+  }
+
+  try {
+    await pool.query("BEGIN");
+
+    for (const vote of votes) {
+      const { competitorId, voteCount, genderCounts } = vote;
+
+      if (!competitorId || voteCount === undefined) {
+        await pool.query("ROLLBACK");
+        return res.status(400).json({ message: "Missing competitor ID or vote count." });
+      }
+
+      // Check if entry exists
+      const existing = await pool.query(
+        `SELECT id FROM votes_admin 
+         WHERE poll_id = $1 AND competitor_id = $2 
+         AND (constituency IS NOT DISTINCT FROM $3) 
+         AND (ward IS NOT DISTINCT FROM $4)`,
+        [pollId, competitorId, constituency || null, ward || null]
+      );
+
+      if (existing.rows.length > 0) {
+        // Update existing entry
+        await pool.query(
+          `UPDATE votes_admin 
+           SET vote_count = $1, 
+               gender_counts = $2,
+               updated_at = NOW()
+           WHERE poll_id = $3 AND competitor_id = $4 
+           AND (constituency IS NOT DISTINCT FROM $5) 
+           AND (ward IS NOT DISTINCT FROM $6)`,
+          [
+            voteCount,
+            genderCounts ? JSON.stringify(genderCounts) : '{}',
+            pollId,
+            competitorId,
+            constituency || null,
+            ward || null,
+          ]
+        );
+      } else {
+        // Insert new entry
+        await pool.query(
+          `INSERT INTO votes_admin 
+           (poll_id, competitor_id, vote_count, gender_counts, constituency, ward)
+           VALUES ($1, $2, $3, $4, $5, $6)`,
+          [
+            pollId,
+            competitorId,
+            voteCount,
+            genderCounts ? JSON.stringify(genderCounts) : '{}',
+            constituency || null,
+            ward || null,
+          ]
+        );
+      }
+    }
+
+    await pool.query("COMMIT");
+    return res.status(201).json({ message: "Admin bulk votes submitted successfully!" });
+  } catch (error: any) {
+    await pool.query("ROLLBACK");
+    console.error("Error submitting admin bulk votes:", error);
+    return res.status(500).json({ message: error.message || "Failed to submit admin bulk votes." });
+  }
+});
+
+// Get admin bulk votes for a poll
+router.get("/:pollId/admin-bulk-votes", async (req, res) => {
+  const pollId = parseInt(req.params.pollId, 10);
+  let { constituency, ward } = req.query;
+
+  if (isNaN(pollId)) {
+    return res.status(400).json({ message: "Invalid poll ID." });
+  }
+
+  // Handle array query params
+  if (Array.isArray(constituency)) constituency = constituency[0];
+  if (Array.isArray(ward)) ward = ward[0];
+
+  try {
+    let query = `
+      SELECT 
+        competitor_id,
+        vote_count,
+        gender_counts,
+        constituency,
+        ward,
+        updated_at
+      FROM votes_admin
+      WHERE poll_id = $1`;
+    
+    const params: any[] = [pollId];
+    let paramIndex = 2;
+
+    if (constituency) {
+      query += ` AND constituency = $${paramIndex++}`;
+      params.push(constituency);
+    }
+
+    if (ward) {
+      query += ` AND ward = $${paramIndex++}`;
+      params.push(ward);
+    }
+
+    const result = await pool.query(query, params);
+
+    return res.json(result.rows);
+  } catch (error: any) {
+    console.error("Error fetching admin bulk votes:", error);
+    return res.status(500).json({ message: "Failed to fetch admin bulk votes." });
   }
 });
 

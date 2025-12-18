@@ -177,6 +177,22 @@ password TEXT NOT NULL
   UNIQUE(poll_id, constituency, ward)
 )
 `,
+`CREATE TABLE IF NOT EXISTS votes_admin (
+  id SERIAL PRIMARY KEY,
+  poll_id INTEGER NOT NULL REFERENCES polls(id) ON DELETE CASCADE,
+  competitor_id INTEGER NOT NULL REFERENCES poll_competitors(id) ON DELETE CASCADE,
+  vote_count INTEGER NOT NULL DEFAULT 0,
+  gender_counts JSONB DEFAULT '{}',
+  region VARCHAR(255),
+  county VARCHAR(255),
+  constituency VARCHAR(255),
+  ward VARCHAR(255),
+  created_at TIMESTAMP DEFAULT NOW(),
+  updated_at TIMESTAMP DEFAULT NOW(),
+  CONSTRAINT votes_admin_poll_competitor_location_unique 
+  UNIQUE(poll_id, competitor_id, constituency, ward)
+)
+`,
   ];
 
   try {
@@ -199,6 +215,16 @@ password TEXT NOT NULL
     await pool.query(`
       CREATE INDEX IF NOT EXISTS idx_demographics_admin_poll_location 
       ON poll_demographics_admin(poll_id, constituency, ward)
+    `);
+
+    await pool.query(`
+      CREATE INDEX IF NOT EXISTS idx_votes_admin_poll_competitor 
+      ON votes_admin(poll_id, competitor_id)
+    `);
+
+    await pool.query(`
+      CREATE INDEX IF NOT EXISTS idx_votes_admin_location 
+      ON votes_admin(poll_id, constituency, ward)
     `);
 
     await insertAdmin();
