@@ -1,6 +1,9 @@
 import { Request, Response, NextFunction } from "express";
-import { auth } from "../lib/auth";
+import jwt from "jsonwebtoken";
 import pool from "../config-db";
+
+// JWT Secret - should match the one in routes/auth.ts
+const JWT_SECRET = process.env.JWT_SECRET || "your-secret-key-change-this-in-production";
 
 export interface AuthRequest extends Request {
   user?: {
@@ -18,7 +21,7 @@ export interface AuthRequest extends Request {
 
 /**
  * Base authentication middleware
- * Verifies session and attaches user to request
+ * Verifies JWT token and attaches user to request
  */
 export const authenticate = async (
   req: AuthRequest,
@@ -37,40 +40,59 @@ export const authenticate = async (
 
     const token = authHeader.substring(7); // Remove "Bearer " prefix
 
-    // Query session from database
-    const sessionResult = await pool.query(
-      `SELECT s.id, s.user_id, s.expires_at, u.id as user_id, u.email, u.name, u.role
-       FROM sessions s
-       JOIN users u ON s.user_id = u.id
-       WHERE s.id = $1 AND s.expires_at > NOW()`,
-      [token]
+    // Verify JWT token
+    const decoded = jwt.verify(token, JWT_SECRET) as {
+      userId: number;
+      email: string;
+      name: string;
+      role: "admin" | "enumerator" | "client";
+      iat: number;
+      exp: number;
+    };
+
+    // Optionally fetch fresh user data from database
+    const userResult = await pool.query(
+      `SELECT id, email, name, role FROM users WHERE id = $1`,
+      [decoded.userId]
     );
 
-    if (sessionResult.rows.length === 0) {
+    if (userResult.rows.length === 0) {
       return res.status(401).json({
         success: false,
-        message: "Invalid or expired session",
+        message: "User not found",
       });
     }
 
-    const session = sessionResult.rows[0];
+    const user = userResult.rows[0];
 
-    // Attach user and session to request
+    // Attach user to request
     req.user = {
-      id: session.user_id,
-      email: session.email,
-      name: session.name,
-      role: session.role,
+      id: user.id,
+      email: user.email,
+      name: user.name,
+      role: user.role,
     };
 
     req.session = {
-      id: session.id,
-      userId: session.user_id,
-      expiresAt: session.expires_at,
+      id: token,
+      userId: user.id,
+      expiresAt: new Date(decoded.exp * 1000),
     };
 
     next();
   } catch (error) {
+    if (error instanceof jwt.JsonWebTokenError) {
+      return res.status(401).json({
+        success: false,
+        message: "Invalid token",
+      });
+    }
+    if (error instanceof jwt.TokenExpiredError) {
+      return res.status(401).json({
+        success: false,
+        message: "Token expired",
+      });
+    }
     console.error("Authentication error:", error);
     return res.status(500).json({
       success: false,

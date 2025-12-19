@@ -2,7 +2,31 @@ import express, { Request, Response } from "express";
 import bcrypt from "bcryptjs";
 import pool from "../config-db";
 import { requireAdmin, AuthRequest } from "../middleware/auth";
-import crypto from "crypto";
+import jwt from "jsonwebtoken";
+
+// JWT Secret - In production, use environment variable
+const JWT_SECRET = process.env.JWT_SECRET || "your-secret-key-change-this-in-production";
+const JWT_EXPIRES_IN = "1h"; // Default: 1 hour
+
+// Supported formats:
+
+// 1h = 1 hour (current default)
+// 30m = 30 minutes
+// 2h = 2 hours
+// 7d = 7 days
+
+// Helper to convert JWT expiration string to milliseconds
+const parseExpirationToMs = (exp: string): number => {
+  const unit = exp.slice(-1);
+  const value = parseInt(exp.slice(0, -1));
+  const units: { [key: string]: number } = {
+    s: 1000,
+    m: 60 * 1000,
+    h: 60 * 60 * 1000,
+    d: 24 * 60 * 60 * 1000,
+  };
+  return value * (units[unit] || 1000);
+};
 
 const router = express.Router();
 
@@ -107,27 +131,22 @@ router.post("/login", async (req: Request, res: Response) => {
       });
     }
 
-    // Create session
-    const sessionId = crypto.randomBytes(32).toString("hex");
-    const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000); // 7 days
+    // Create JWT token
+    const payload = {
+      userId: user.id,
+      email: user.email,
+      name: user.name,
+      role: user.role,
+    };
 
-    await pool.query(
-      `INSERT INTO sessions (id, user_id, expires_at, ip_address, user_agent)
-       VALUES ($1, $2, $3, $4, $5)`,
-      [
-        sessionId,
-        user.id,
-        expiresAt,
-        req.ip || req.connection.remoteAddress,
-        req.headers["user-agent"],
-      ]
-    );
+    const token = jwt.sign(payload, JWT_SECRET, { expiresIn: JWT_EXPIRES_IN });
+    const expiresAt = new Date(Date.now() + parseExpirationToMs(JWT_EXPIRES_IN));
 
     return res.status(200).json({
       success: true,
       message: "Login successful",
       session: {
-        token: sessionId,
+        token,
         expiresAt,
       },
       user: {
@@ -148,24 +167,12 @@ router.post("/login", async (req: Request, res: Response) => {
 
 /**
  * POST /api/auth/logout
- * End user session
+ * End user session (JWT is stateless, so this is mainly for client-side cleanup)
  */
 router.post("/logout", async (req: Request, res: Response) => {
   try {
-    const authHeader = req.headers.authorization;
-
-    if (!authHeader || !authHeader.startsWith("Bearer ")) {
-      return res.status(400).json({
-        success: false,
-        message: "No session token provided",
-      });
-    }
-
-    const token = authHeader.substring(7);
-
-    // Delete session
-    await pool.query("DELETE FROM sessions WHERE id = $1", [token]);
-
+    // With JWT, logout is primarily client-side (removing the token)
+    // We just acknowledge the request
     return res.status(200).json({
       success: true,
       message: "Logged out successfully",
@@ -181,7 +188,7 @@ router.post("/logout", async (req: Request, res: Response) => {
 
 /**
  * GET /api/auth/session
- * Get current user session
+ * Get current user session (verify JWT and return user data)
  */
 router.get("/session", async (req: Request, res: Response) => {
   try {
@@ -196,38 +203,57 @@ router.get("/session", async (req: Request, res: Response) => {
 
     const token = authHeader.substring(7);
 
+    // Verify JWT token
+    const decoded = jwt.verify(token, JWT_SECRET) as {
+      userId: number;
+      email: string;
+      name: string;
+      role: string;
+      iat: number;
+      exp: number;
+    };
+
+    // Fetch fresh user data from database (in case role or details changed)
     const result = await pool.query(
-      `SELECT s.id, s.expires_at, u.id as user_id, u.email, u.name, u.role, u.image
-       FROM sessions s
-       JOIN users u ON s.user_id = u.id
-       WHERE s.id = $1 AND s.expires_at > NOW()`,
-      [token]
+      `SELECT id, email, name, role, image FROM users WHERE id = $1`,
+      [decoded.userId]
     );
 
     if (result.rows.length === 0) {
       return res.status(401).json({
         success: false,
-        message: "Invalid or expired session",
+        message: "User not found",
       });
     }
 
-    const session = result.rows[0];
+    const user = result.rows[0];
 
     return res.status(200).json({
       success: true,
       user: {
-        id: session.user_id,
-        email: session.email,
-        name: session.name,
-        role: session.role,
-        image: session.image,
+        id: user.id,
+        email: user.email,
+        name: user.name,
+        role: user.role,
+        image: user.image,
       },
       session: {
-        id: session.id,
-        expiresAt: session.expires_at,
+        expiresAt: new Date(decoded.exp * 1000).toISOString(),
       },
     });
   } catch (error) {
+    if (error instanceof jwt.JsonWebTokenError) {
+      return res.status(401).json({
+        success: false,
+        message: "Invalid token",
+      });
+    }
+    if (error instanceof jwt.TokenExpiredError) {
+      return res.status(401).json({
+        success: false,
+        message: "Token expired",
+      });
+    }
     console.error("Session error:", error);
     return res.status(500).json({
       success: false,
