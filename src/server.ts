@@ -11,7 +11,7 @@ import updateAdmin from "./routes/update-admin";
 import comments from "./routes/comments";
 import liveVotes from "./routes/votehistory";
 import opinionsPolls from "./routes/opinion_poll";
-import sendOtp from "./routes/utilities/auth_admin";
+import authRoutes from "./routes/auth";
 import uploadRoutes from "./routes/upload";
 
 dotenv.config();
@@ -35,7 +35,7 @@ app.use("/api/update-admin", updateAdmin);
 app.use("/api/comments", comments);
 app.use("/api/live-votes", liveVotes);
 app.use("/api/Opinions", opinionsPolls);
-app.use("/api/admin", sendOtp);
+app.use("/api/auth", authRoutes);
 app.use("/api/upload", uploadRoutes);
 
 pool.query("SELECT NOW()", (err, res) => {

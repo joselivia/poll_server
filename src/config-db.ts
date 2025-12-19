@@ -1,6 +1,6 @@
 import { Pool } from "pg";
 import dotenv from "dotenv";
-import { insertAdmin } from "./routes/admin";
+import { seedAdminUser } from "./lib/seedAdmin";
 
 dotenv.config();
 export const pool = new Pool({
@@ -15,6 +15,38 @@ export const pool = new Pool({
 // });
 const createTables = async () => {
   const queries = [
+    // Users table for authentication
+    `CREATE TABLE IF NOT EXISTS users (
+      id SERIAL PRIMARY KEY,
+      email VARCHAR(255) UNIQUE NOT NULL,
+      password VARCHAR(255) NOT NULL,
+      name VARCHAR(255) NOT NULL,
+      role VARCHAR(50) NOT NULL DEFAULT 'client' CHECK (role IN ('admin', 'enumerator', 'client')),
+      email_verified BOOLEAN DEFAULT false,
+      image TEXT,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );`,
+    
+    // Sessions table for better-auth
+    `CREATE TABLE IF NOT EXISTS sessions (
+      id VARCHAR(255) PRIMARY KEY,
+      user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      expires_at TIMESTAMP NOT NULL,
+      ip_address VARCHAR(45),
+      user_agent TEXT,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );`,
+    
+    // Verification tokens table
+    `CREATE TABLE IF NOT EXISTS verification_tokens (
+      id SERIAL PRIMARY KEY,
+      user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      token VARCHAR(255) UNIQUE NOT NULL,
+      expires_at TIMESTAMP NOT NULL,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );`,
+    
     `CREATE TABLE IF NOT EXISTS polls (
   id SERIAL PRIMARY KEY,
   title TEXT NOT NULL,
@@ -114,27 +146,7 @@ const createTables = async () => {
   created_at TIMESTAMP DEFAULT NOW()
 );
 `,
-`CREATE TABLE IF NOT EXISTS login(
-id SERIAL PRIMARY KEY,
-email TEXT NOT NULL,
-password TEXT NOT NULL
-)`,
-`CREATE TABLE IF NOT EXISTS admin_otps (
-  id SERIAL PRIMARY KEY,
-  email VARCHAR(255) NOT NULL,
-  otp VARCHAR(10) NOT NULL,
-  expires_at TIMESTAMP NOT NULL
-)`,
-// `CREATE TABLE sessions (
-//   id SERIAL PRIMARY KEY,
-//   user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
-//   token TEXT NOT NULL,
-//   user_agent TEXT,
-//   ip_address TEXT,
-//   created_at TIMESTAMP DEFAULT NOW(),
-//   last_active TIMESTAMP DEFAULT NOW()
-// );
-// `,
+
 
 `CREATE TABLE IF NOT EXISTS comments (
   id SERIAL PRIMARY KEY,
@@ -203,6 +215,16 @@ password TEXT NOT NULL
     
     // Create indexes for faster lookups
     await pool.query(`
+      CREATE INDEX IF NOT EXISTS idx_users_email 
+      ON users(email)
+    `);
+    
+    await pool.query(`
+      CREATE INDEX IF NOT EXISTS idx_sessions_user_id 
+      ON sessions(user_id)
+    `);
+    
+    await pool.query(`
       CREATE INDEX IF NOT EXISTS idx_admin_responses_poll_question 
       ON poll_responses_admin(poll_id, question_id)
     `);
@@ -227,7 +249,7 @@ password TEXT NOT NULL
       ON votes_admin(poll_id, constituency, ward)
     `);
 
-    await insertAdmin();
+    await seedAdminUser();
   } catch (error: Error | any) {
     console.error("❌ Error creating tables:", error);
   }

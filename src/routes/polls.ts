@@ -1,6 +1,7 @@
 import express from "express";
 import multer from "multer";
 import { pool } from "../config-db"; 
+import { requireAdmin, requireEnumerator, AuthRequest } from "../middleware/auth";
 
 const router = express.Router();
 const upload = multer({ storage: multer.memoryStorage() });
@@ -16,7 +17,9 @@ interface PollQuestion {
   isCompetitorQuestion?: boolean;
   options?: PollOption[];
 }
-router.post("/", async (req, res) => {
+
+// Create a new poll - Admin only
+router.post("/", requireAdmin, async (req: AuthRequest, res) => {
   const {
     title,
     category,
