@@ -133,6 +133,7 @@ const createTables = async () => {
     rating jsonb[],
     image_uploads JSONB,
     audio_recordings JSONB,
+    location_responses JSONB,
     voted_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 `,

@@ -16,7 +16,7 @@ interface Option {
 
 interface Question {
   id: number;
-  type: 'multi-choice'| 'single-choice' | 'open-ended' | 'yes-no-notsure' | 'rating' | 'ranking' | 'image-upload' | 'audio-recording';
+  type: 'multi-choice'| 'single-choice' | 'open-ended' | 'yes-no-notsure' | 'rating' | 'ranking' | 'image-upload' | 'audio-recording' | 'location';
   questionText: string;
   options?: Option[];
   isCompetitorQuestion?: boolean;
@@ -35,7 +35,7 @@ interface PollData {
 interface AggregatedResponse {
   questionId: number;
   questionText: string;
-  type: 'single-choice'| 'multi-choice' | 'open-ended' | 'yes-no-notsure' | 'rating' | 'ranking' | 'image-upload' | 'audio-recording';
+  type: 'single-choice'| 'multi-choice' | 'open-ended' | 'yes-no-notsure' | 'rating' | 'ranking' | 'image-upload' | 'audio-recording' | 'location';
   isCompetitorQuestion?: boolean;
   totalResponses: number;
   choices?: {
@@ -51,6 +51,7 @@ interface AggregatedResponse {
   rankingData?: any[];
   imageUrls?: string[];
   audioUrls?: string[];
+  locations?: { latitude: number; longitude: number; label?: string }[];
 }
 
 interface DemographicsData {
@@ -105,6 +106,7 @@ router.post("/:pollId/vote", async (req, res) => {
     const openEndedResponses: { questionId: number; response: string }[] = [];
     const ratingResponses: { questionId: number; rating: number }[] = [];
     const imageUploads: { questionId: number; url: string }[] = [];
+    const locationResponses: { questionId: number; latitude: number; longitude: number }[] = [];
     const audioRecordings: { questionId: number; url: string }[] = [];
 
     for (const r of responses) {
@@ -158,6 +160,15 @@ router.post("/:pollId/vote", async (req, res) => {
           url: r.audioUrl.trim(),
         });
       }
+      
+      // Location
+      if (r.latitude !== undefined && r.longitude !== undefined) {
+        locationResponses.push({
+          questionId: r.questionId,
+          latitude: r.latitude,
+          longitude: r.longitude,
+        });
+      }
     }
     await client.query(
       `
@@ -166,9 +177,10 @@ router.post("/:pollId/vote", async (req, res) => {
         selected_option_ids, selected_competitor_ids,
         open_ended_responses, rating,
         image_uploads, audio_recordings,
+        location_responses,
         respondent_name, respondent_age, respondent_gender,
         region, county, constituency, ward
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
       `,
       [
         pollId,
@@ -179,7 +191,8 @@ router.post("/:pollId/vote", async (req, res) => {
 ratingResponses.length > 0 ? ratingResponses : null,
         imageUploads.length > 0 ? JSON.stringify(imageUploads) : null,
         audioRecordings.length > 0 ? JSON.stringify(audioRecordings) : null,
-            respondentName || null,
+        locationResponses.length > 0 ? JSON.stringify(locationResponses) : null,
+        respondentName || null,
         respondentAge ? parseInt(respondentAge, 10) : null,
         respondentGender || null,
         region || null,
@@ -293,6 +306,8 @@ router.get("/:pollId/results", async (req, res) => {
          rating,
          image_uploads,
          audio_recordings,
+         location_responses,
+         respondent_name,
          respondent_gender,
          respondent_age
        FROM poll_responses
@@ -450,6 +465,7 @@ router.get("/:pollId/results", async (req, res) => {
       const openEnded: string[] = [];
       const imageUrls: string[] = [];
       const audioUrls: string[] = [];
+      const locationPoints: { latitude: number; longitude: number; label?: string }[] = [];
       const answeredUsers = new Set<string>();
 
       for (const r of allResponses) {
@@ -511,6 +527,23 @@ router.get("/:pollId/results", async (req, res) => {
           if (match) {
             answered = true;
             audioUrls.push(match.url.trim());
+          }
+        }
+
+        // === LOCATION ===
+        if (question.type === "location" && Array.isArray(r.location_responses)) {
+          const match = r.location_responses.find(
+            (x: any) => x?.questionId === question.id && 
+                        x?.latitude !== undefined && 
+                        x?.longitude !== undefined
+          );
+          if (match) {
+            answered = true;
+            locationPoints.push({
+              latitude: match.latitude,
+              longitude: match.longitude,
+              label: r.respondent_name || undefined,
+            });
           }
         }
 
@@ -697,6 +730,11 @@ router.get("/:pollId/results", async (req, res) => {
       // Audio URLs
       if (audioUrls.length > 0) {
         result.audioUrls = audioUrls;
+      }
+
+      // Location data
+      if (locationPoints.length > 0) {
+        result.locations = locationPoints;
       }
 
       aggregatedResponses.push(result);
