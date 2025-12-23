@@ -35,15 +35,7 @@ router.get("/status", async (req, res) => {
 
     const allowMultiple = pollSettings.rows[0].allow_multiple_votes;
 
-    // If multiple votes allowed → automatically false
-    if (allowMultiple) {
-      return res.json({
-        success: true,
-        alreadyVoted: false,
-      });
-    }
-
-    // 2. Check if user has voted
+    // 2. Check if user has voted (regardless of multiple votes setting)
     const check = await pool.query(
       "SELECT * FROM votes WHERE poll_id = $1 AND voter_id = $2",
       [pollId, voter_id]
@@ -54,6 +46,7 @@ router.get("/status", async (req, res) => {
     return res.json({
       success: true,
       alreadyVoted,
+      allowMultipleVotes: allowMultiple,
     });
   } catch (error) {
     console.error("Error checking vote status:", error);
