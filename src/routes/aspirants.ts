@@ -44,22 +44,25 @@ router.get("/published", async (req, res) => {
   try {
     const result = await pool.query(
       `SELECT 
-  id, 
-  title, 
-  presidential, 
-  category, 
-  region, 
-  county, 
-  constituency, 
-  ward, 
-  total_votes, 
-  spoiled_votes, 
-  published, 
-  voting_expires_at, 
-  created_at
-FROM polls
-WHERE published = true
-ORDER BY created_at DESC
+  p.id, 
+  p.title, 
+  p.presidential, 
+  p.category, 
+  p.region, 
+  p.county, 
+  p.constituency, 
+  p.ward, 
+  (
+    COALESCE((SELECT COUNT(*) FROM votes WHERE poll_id = p.id), 0) +
+    COALESCE((SELECT SUM(vote_count) FROM votes_admin WHERE poll_id = p.id), 0)
+  ) as total_votes,
+  p.spoiled_votes, 
+  p.published, 
+  p.voting_expires_at, 
+  p.created_at
+FROM polls p
+WHERE p.published = true
+ORDER BY p.created_at DESC
     `
     );
     res.json(result.rows);
