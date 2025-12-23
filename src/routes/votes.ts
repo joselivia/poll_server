@@ -45,7 +45,7 @@ router.get("/status", async (req, res) => {
 
     // 2. Check if user has voted
     const check = await pool.query(
-      "SELECT 1 FROM votes WHERE poll_id = $1 AND voter_id = $2",
+      "SELECT * FROM votes WHERE poll_id = $1 AND voter_id = $2",
       [pollId, voter_id]
     );
 
