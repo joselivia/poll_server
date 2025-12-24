@@ -70,6 +70,42 @@ ORDER BY p.created_at DESC
     res.status(500).json({ message: "Failed to fetch published polls" });
   }
 });
+// Lightweight endpoint for metadata (title and competitor question only)
+router.get("/:id/metadata", async (req, res) => {
+  const pollId = parseInt(req.params.id);
+  if (isNaN(pollId)) {
+    return res.status(400).json({ message: "Invalid poll ID." });
+  }
+
+  try {
+    const pollQuery = `
+      SELECT title
+      FROM polls
+      WHERE id = $1
+    `;
+    const pollResult = await pool.query(pollQuery, [pollId]);
+    if (pollResult.rows.length === 0) {
+      return res.status(404).json({ message: "Poll not found." });
+    }
+
+    const questionQuery = `
+      SELECT question_text
+      FROM poll_questions
+      WHERE poll_id = $1 AND is_competitor_question = true
+      LIMIT 1
+    `;
+    const questionResult = await pool.query(questionQuery, [pollId]);
+    
+    return res.status(200).json({
+      title: pollResult.rows[0].title,
+      competitorQuestion: questionResult.rows[0]?.question_text || "Select Your Candidate"
+    });
+  } catch (err) {
+    console.error("Error fetching poll metadata:", err);
+    return res.status(500).json({ message: "Server error." });
+  }
+});
+
 router.get("/:id", async (req, res) => {
   const pollId = parseInt(req.params.id);
   if (isNaN(pollId)) {
