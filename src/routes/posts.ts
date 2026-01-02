@@ -44,9 +44,28 @@ const fileFilter = (_req: any, file: Express.Multer.File, cb: any) => {
 
 const upload = multer({ 
   storage,
-  limits: { files: 6, fileSize: 50 * 1024 * 1024 }, // 50MB per file
+  limits: { files: 50, fileSize: 50 * 1024 * 1024 }, // 50MB per file, 50 files max
   fileFilter 
 });
+
+// Helper function to delete a file from filesystem
+const deleteFileFromUrl = (fileUrl: string) => {
+  try {
+    // Extract the filename from URL
+    const urlParts = fileUrl.split('/uploads/');
+    if (urlParts.length < 2) return;
+    
+    const relativePath = urlParts[1];
+    const filePath = path.join(uploadsDir, relativePath);
+    
+    if (fs.existsSync(filePath)) {
+      fs.unlinkSync(filePath);
+      console.log(`✅ Deleted file: ${filePath}`);
+    }
+  } catch (error) {
+    console.error(`❌ Failed to delete file ${fileUrl}:`, error);
+  }
+};
 
 const posts: {
   id: number;
@@ -56,7 +75,7 @@ const posts: {
   created_at: string;
 }[] = [];
 
-router.post('/posts', upload.array('media', 6), async (req, res) => {
+router.post('/posts', upload.array('media', 50), async (req, res) => {
   try {
     const { title, content } = req.body;
     const files = req.files as Express.Multer.File[];
@@ -67,15 +86,17 @@ router.post('/posts', upload.array('media', 6), async (req, res) => {
     const videoUrls: string[] = [];
     const pdfUrls: string[] = [];
 
+    // Process all files without limits
     files.forEach((file) => {
-      const fileUrl = `${baseUrl}/uploads/${path.basename(path.dirname(file.path))}/${file.filename}`;
-      
-      if (file.mimetype.startsWith('video/')) {
-        if (videoUrls.length < 3) videoUrls.push(fileUrl);
-      } else if (file.mimetype.startsWith('image/')) {
-        if (imageUrls.length < 3) imageUrls.push(fileUrl);
+      if (file.mimetype.startsWith('image/')) {
+        const fileUrl = `${baseUrl}/uploads/blog-images/${file.filename}`;
+        imageUrls.push(fileUrl);
+      } else if (file.mimetype.startsWith('video/')) {
+        const fileUrl = `${baseUrl}/uploads/blog-videos/${file.filename}`;
+        videoUrls.push(fileUrl);
       } else if (file.mimetype === 'application/pdf') {
-        if (pdfUrls.length < 3) pdfUrls.push(fileUrl);
+        const fileUrl = `${baseUrl}/uploads/blog-pdfs/${file.filename}`;
+        pdfUrls.push(fileUrl);
       }
     });
 
@@ -165,5 +186,105 @@ router.get('/posts/:id', async (req, res) => {
   }
 });
 
+router.put('/posts/:id', upload.array('media', 50), async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { title, content, existingImages, existingVideos, existingPdfs } = req.body;
+    const files = req.files as Express.Multer.File[];
+
+    // Fetch current post data to identify removed files
+    const currentPost = await pool.query(
+      `SELECT image_data, video_data, pdf_data FROM blog_posts WHERE id = $1`,
+      [id]
+    );
+
+    if (currentPost.rows.length === 0) {
+      return res.status(404).json({ error: "Post not found" });
+    }
+
+    const oldImages: string[] = Array.isArray(currentPost.rows[0].image_data) ? currentPost.rows[0].image_data : [];
+    const oldVideos: string[] = Array.isArray(currentPost.rows[0].video_data) ? currentPost.rows[0].video_data : [];
+    const oldPdfs: string[] = Array.isArray(currentPost.rows[0].pdf_data) ? currentPost.rows[0].pdf_data : [];
+
+    const baseUrl = process.env.BASE_URL || `http://localhost:${process.env.PORT || 8082}`;
+    
+    // Parse existing media URLs from request
+    const currentImages: string[] = existingImages ? JSON.parse(existingImages) : [];
+    const currentVideos: string[] = existingVideos ? JSON.parse(existingVideos) : [];
+    const currentPdfs: string[] = existingPdfs ? JSON.parse(existingPdfs) : [];
+
+    // Find and delete removed files
+    const removedImages = oldImages.filter(img => !currentImages.includes(img));
+    const removedVideos = oldVideos.filter(vid => !currentVideos.includes(vid));
+    const removedPdfs = oldPdfs.filter(pdf => !currentPdfs.includes(pdf));
+
+    [...removedImages, ...removedVideos, ...removedPdfs].forEach(deleteFileFromUrl);
+
+    // Add newly uploaded files without limits
+    files.forEach((file) => {
+      if (file.mimetype.startsWith('image/')) {
+        const fileUrl = `${baseUrl}/uploads/blog-images/${file.filename}`;
+        currentImages.push(fileUrl);
+      } else if (file.mimetype.startsWith('video/')) {
+        const fileUrl = `${baseUrl}/uploads/blog-videos/${file.filename}`;
+        currentVideos.push(fileUrl);
+      } else if (file.mimetype === 'application/pdf') {
+        const fileUrl = `${baseUrl}/uploads/blog-pdfs/${file.filename}`;
+        currentPdfs.push(fileUrl);
+      }
+    });
+
+    await pool.query(
+      `UPDATE blog_posts 
+       SET title = $1, content = $2, image_data = $3, video_data = $4, pdf_data = $5
+       WHERE id = $6`,
+      [
+        title, 
+        content, 
+        currentImages.length > 0 ? JSON.stringify(currentImages) : null,
+        currentVideos.length > 0 ? JSON.stringify(currentVideos) : null,
+        currentPdfs.length > 0 ? JSON.stringify(currentPdfs) : null,
+        id
+      ]
+    );
+
+    res.status(200).json({ message: '✅ Post Updated Successfully' });
+  } catch (error) {
+    console.error('❌ Post update failed:', error);
+    res.status(500).json({ error: 'Internal Server Error' });
+  }
+});
+
+router.delete('/posts/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    // Fetch post data to get all media files
+    const result = await pool.query(
+      `SELECT image_data, video_data, pdf_data FROM blog_posts WHERE id = $1`,
+      [id]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: "Post not found" });
+    }
+
+    const post = result.rows[0];
+    const images: string[] = Array.isArray(post.image_data) ? post.image_data : [];
+    const videos: string[] = Array.isArray(post.video_data) ? post.video_data : [];
+    const pdfs: string[] = Array.isArray(post.pdf_data) ? post.pdf_data : [];
+
+    // Delete all media files
+    [...images, ...videos, ...pdfs].forEach(deleteFileFromUrl);
+
+    // Delete post from database
+    await pool.query(`DELETE FROM blog_posts WHERE id = $1`, [id]);
+
+    res.status(200).json({ message: '✅ Post and all associated files deleted successfully' });
+  } catch (error) {
+    console.error('❌ Post deletion failed:', error);
+    res.status(500).json({ error: 'Internal Server Error' });
+  }
+});
 
 export default router;   
