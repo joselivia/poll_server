@@ -70,8 +70,8 @@ router.post("/", upload.single("file"), (req, res) => {
                     req.file.mimetype === "application/octet-stream";
     const type = isAudio ? "audio" : "images";
     
-    const baseUrl = process.env.BASE_URL || `http://localhost:${process.env.PORT || 8082}`;
-    const fileUrl = `${baseUrl}/uploads/${type}/${req.file.filename}`;
+    // Return relative path - frontend will add baseURL
+    const fileUrl = `/uploads/${type}/${req.file.filename}`;
 
     res.status(200).json({
       message: "File uploaded successfully",

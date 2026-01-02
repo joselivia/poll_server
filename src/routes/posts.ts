@@ -79,24 +79,22 @@ router.post('/posts', upload.array('media', 50), async (req, res) => {
   try {
     const { title, content } = req.body;
     const files = req.files as Express.Multer.File[];
-
-    const baseUrl = process.env.BASE_URL || `http://localhost:${process.env.PORT || 8082}`;
     
     const imageUrls: string[] = [];
     const videoUrls: string[] = [];
     const pdfUrls: string[] = [];
 
-    // Process all files without limits
+    // Store relative paths only - frontend will add baseURL
     files.forEach((file) => {
       if (file.mimetype.startsWith('image/')) {
-        const fileUrl = `${baseUrl}/uploads/blog-images/${file.filename}`;
-        imageUrls.push(fileUrl);
+        const relativePath = `/uploads/blog-images/${file.filename}`;
+        imageUrls.push(relativePath);
       } else if (file.mimetype.startsWith('video/')) {
-        const fileUrl = `${baseUrl}/uploads/blog-videos/${file.filename}`;
-        videoUrls.push(fileUrl);
+        const relativePath = `/uploads/blog-videos/${file.filename}`;
+        videoUrls.push(relativePath);
       } else if (file.mimetype === 'application/pdf') {
-        const fileUrl = `${baseUrl}/uploads/blog-pdfs/${file.filename}`;
-        pdfUrls.push(fileUrl);
+        const relativePath = `/uploads/blog-pdfs/${file.filename}`;
+        pdfUrls.push(relativePath);
       }
     });
 
@@ -205,8 +203,6 @@ router.put('/posts/:id', upload.array('media', 50), async (req, res) => {
     const oldImages: string[] = Array.isArray(currentPost.rows[0].image_data) ? currentPost.rows[0].image_data : [];
     const oldVideos: string[] = Array.isArray(currentPost.rows[0].video_data) ? currentPost.rows[0].video_data : [];
     const oldPdfs: string[] = Array.isArray(currentPost.rows[0].pdf_data) ? currentPost.rows[0].pdf_data : [];
-
-    const baseUrl = process.env.BASE_URL || `http://localhost:${process.env.PORT || 8082}`;
     
     // Parse existing media URLs from request
     const currentImages: string[] = existingImages ? JSON.parse(existingImages) : [];
@@ -220,17 +216,17 @@ router.put('/posts/:id', upload.array('media', 50), async (req, res) => {
 
     [...removedImages, ...removedVideos, ...removedPdfs].forEach(deleteFileFromUrl);
 
-    // Add newly uploaded files without limits
+    // Add newly uploaded files without limits - store relative paths only
     files.forEach((file) => {
       if (file.mimetype.startsWith('image/')) {
-        const fileUrl = `${baseUrl}/uploads/blog-images/${file.filename}`;
-        currentImages.push(fileUrl);
+        const relativePath = `/uploads/blog-images/${file.filename}`;
+        currentImages.push(relativePath);
       } else if (file.mimetype.startsWith('video/')) {
-        const fileUrl = `${baseUrl}/uploads/blog-videos/${file.filename}`;
-        currentVideos.push(fileUrl);
+        const relativePath = `/uploads/blog-videos/${file.filename}`;
+        currentVideos.push(relativePath);
       } else if (file.mimetype === 'application/pdf') {
-        const fileUrl = `${baseUrl}/uploads/blog-pdfs/${file.filename}`;
-        currentPdfs.push(fileUrl);
+        const relativePath = `/uploads/blog-pdfs/${file.filename}`;
+        currentPdfs.push(relativePath);
       }
     });
 
