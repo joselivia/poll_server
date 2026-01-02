@@ -111,9 +111,9 @@ const createTables = async () => {
   id SERIAL PRIMARY KEY,
   title TEXT NOT NULL,
   content TEXT NOT NULL,
-  image_data BYTEA[],
-  video_data BYTEA[],
-  pdf_data bytea[],
+  image_data JSONB,
+  video_data JSONB,
+  pdf_data JSONB,
   created_at TIMESTAMP DEFAULT NOW()
 );`,
     `CREATE TABLE IF NOT EXISTS poll_responses (
