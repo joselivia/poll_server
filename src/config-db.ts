@@ -27,7 +27,7 @@ const createTables = async () => {
       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
       updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     );`,
-    
+
     // Sessions table for better-auth
     `CREATE TABLE IF NOT EXISTS sessions (
       id VARCHAR(255) PRIMARY KEY,
@@ -37,7 +37,7 @@ const createTables = async () => {
       user_agent TEXT,
       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     );`,
-    
+
     // Verification tokens table
     `CREATE TABLE IF NOT EXISTS verification_tokens (
       id SERIAL PRIMARY KEY,
@@ -46,7 +46,7 @@ const createTables = async () => {
       expires_at TIMESTAMP NOT NULL,
       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     );`,
-    
+
     `CREATE TABLE IF NOT EXISTS polls (
   id SERIAL PRIMARY KEY,
   title TEXT NOT NULL,
@@ -70,7 +70,7 @@ const createTables = async () => {
       profile_image BYTEA,
       poll_id INT REFERENCES polls(id) ON DELETE CASCADE
     );`,
-  `CREATE TABLE IF NOT EXISTS votes (
+    `CREATE TABLE IF NOT EXISTS votes (
   id SERIAL PRIMARY KEY,
   voter_id TEXT,
   poll_id INTEGER NOT NULL REFERENCES polls(id) ON DELETE CASCADE,
@@ -99,7 +99,7 @@ const createTables = async () => {
       option_text TEXT NOT NULL
     );
 `,
- `CREATE TABLE IF NOT EXISTS vote_history (
+    `CREATE TABLE IF NOT EXISTS vote_history (
   id SERIAL PRIMARY KEY,
   poll_id INT REFERENCES polls(id) ON DELETE CASCADE,
   competitor_id INT REFERENCES poll_competitors(id) ON DELETE CASCADE,
@@ -107,7 +107,7 @@ const createTables = async () => {
   recorded_at TIMESTAMP DEFAULT NOW()
 );
 `,
-  `CREATE TABLE IF NOT EXISTS blog_posts (
+    `CREATE TABLE IF NOT EXISTS blog_posts (
   id SERIAL PRIMARY KEY,
   title TEXT NOT NULL,
   content TEXT NOT NULL,
@@ -126,7 +126,8 @@ const createTables = async () => {
   county TEXT,
   constituency TEXT,
   ward TEXT,
-    user_identifier TEXT NOT NULL, 
+    user_identifier TEXT NOT NULL,
+    voter_id TEXT,
     selected_option_ids INT[],
     selected_competitor_ids INT[],
     open_ended_responses jsonb[],
@@ -137,7 +138,7 @@ const createTables = async () => {
     voted_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 `,
-`CREATE TABLE IF NOT EXISTS poll_rankings (
+    `CREATE TABLE IF NOT EXISTS poll_rankings (
   id SERIAL PRIMARY KEY,
   poll_id INT REFERENCES polls(id) ON DELETE CASCADE,
   question_id INT REFERENCES poll_questions(id) ON DELETE CASCADE,
@@ -149,7 +150,7 @@ const createTables = async () => {
 `,
 
 
-`CREATE TABLE IF NOT EXISTS comments (
+    `CREATE TABLE IF NOT EXISTS comments (
   id SERIAL PRIMARY KEY,
   name TEXT NOT NULL,
   poll_id INT NOT NULL REFERENCES polls(id) ON DELETE CASCADE,
@@ -158,7 +159,7 @@ const createTables = async () => {
  created_at TIMESTAMP DEFAULT NOW()
 )
 `,
-`CREATE TABLE IF NOT EXISTS poll_responses_admin (
+    `CREATE TABLE IF NOT EXISTS poll_responses_admin (
   id SERIAL PRIMARY KEY,
   poll_id INTEGER NOT NULL REFERENCES polls(id) ON DELETE CASCADE,
   question_id INTEGER NOT NULL REFERENCES poll_questions(id) ON DELETE CASCADE,
@@ -177,7 +178,7 @@ const createTables = async () => {
   UNIQUE(poll_id, question_id, constituency, ward)
 )
 `,
-`CREATE TABLE IF NOT EXISTS poll_demographics_admin (
+    `CREATE TABLE IF NOT EXISTS poll_demographics_admin (
   id SERIAL PRIMARY KEY,
   poll_id INTEGER NOT NULL REFERENCES polls(id) ON DELETE CASCADE,
   gender_counts JSONB DEFAULT '{}',
@@ -190,7 +191,7 @@ const createTables = async () => {
   UNIQUE(poll_id, constituency, ward)
 )
 `,
-`CREATE TABLE IF NOT EXISTS votes_admin (
+    `CREATE TABLE IF NOT EXISTS votes_admin (
   id SERIAL PRIMARY KEY,
   poll_id INTEGER NOT NULL REFERENCES polls(id) ON DELETE CASCADE,
   competitor_id INTEGER NOT NULL REFERENCES poll_competitors(id) ON DELETE CASCADE,
@@ -213,23 +214,23 @@ const createTables = async () => {
       await pool.query(query);
     }
     console.log("✅ All tables are created successfully!");
-    
+
     // Create indexes for faster lookups
     await pool.query(`
       CREATE INDEX IF NOT EXISTS idx_users_email 
       ON users(email)
     `);
-    
+
     await pool.query(`
       CREATE INDEX IF NOT EXISTS idx_sessions_user_id 
       ON sessions(user_id)
     `);
-    
+
     await pool.query(`
       CREATE INDEX IF NOT EXISTS idx_admin_responses_poll_question 
       ON poll_responses_admin(poll_id, question_id)
     `);
-    
+
     await pool.query(`
       CREATE INDEX IF NOT EXISTS idx_admin_responses_location 
       ON poll_responses_admin(poll_id, constituency, ward)

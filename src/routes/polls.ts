@@ -299,6 +299,38 @@ router.get("/", async (req, res) => {
   }
 });
 
+// Get published opinion polls for public viewing
+router.get("/published", async (req, res) => {
+  try {
+    const result = await pool.query(`
+      SELECT 
+        p.id, 
+        p.title, 
+        p.presidential, 
+        p.category, 
+        p.region, 
+        p.county, 
+        p.constituency, 
+        p.ward, 
+        p.published, 
+        p.voting_expires_at, 
+        p.created_at,
+        TRUE AS is_opinion_poll
+      FROM polls p
+      WHERE p.published = true
+      AND EXISTS (
+        SELECT 1 FROM poll_questions q 
+        WHERE q.poll_id = p.id AND q.is_competitor_question = false
+      )
+      ORDER BY p.created_at DESC
+    `);
+    res.status(200).json(result.rows);
+  } catch (error) {
+    console.error("Error fetching published opinion polls:", error);
+    res.status(500).json({ message: "Server error." });
+  }
+});
+
 router.get("/:id", async (req, res) => {
   const pollId = parseInt(req.params.id);
   if (isNaN(pollId)) {
@@ -391,7 +423,26 @@ router.get("/:id", async (req, res) => {
   }
 });
 
+// Toggle publish status for opinion polls
+router.put("/:id/publish", async (req, res) => {
+  const { id } = req.params;
+  const { published } = req.body;
 
+  try {
+    const result = await pool.query(
+      `UPDATE polls SET published = $1 WHERE id = $2 RETURNING *`,
+      [published, id]
+    );
 
+    if (result.rows.length === 0) {
+      return res.status(404).json({ message: "Poll not found" });
+    }
+
+    res.status(200).json({ message: "Poll published status updated", poll: result.rows[0] });
+  } catch (error) {
+    console.error("Error updating poll publish status:", error);
+    res.status(500).json({ message: "Failed to update poll publish status" });
+  }
+});
 
 export default router;

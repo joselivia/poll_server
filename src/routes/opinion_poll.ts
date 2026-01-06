@@ -6,7 +6,7 @@ interface Competitor {
   id: number;
   name: string;
   party: string;
-  profileImage: Buffer | string | null; 
+  profileImage: Buffer | string | null;
 }
 
 interface Option {
@@ -16,7 +16,7 @@ interface Option {
 
 interface Question {
   id: number;
-  type: 'multi-choice'| 'single-choice' | 'open-ended' | 'yes-no-notsure' | 'rating' | 'ranking' | 'image-upload' | 'audio-recording' | 'location';
+  type: 'multi-choice' | 'single-choice' | 'open-ended' | 'yes-no-notsure' | 'rating' | 'ranking' | 'image-upload' | 'audio-recording' | 'location';
   questionText: string;
   options?: Option[];
   isCompetitorQuestion?: boolean;
@@ -35,7 +35,7 @@ interface PollData {
 interface AggregatedResponse {
   questionId: number;
   questionText: string;
-  type: 'single-choice'| 'multi-choice' | 'open-ended' | 'yes-no-notsure' | 'rating' | 'ranking' | 'image-upload' | 'audio-recording' | 'location';
+  type: 'single-choice' | 'multi-choice' | 'open-ended' | 'yes-no-notsure' | 'rating' | 'ranking' | 'image-upload' | 'audio-recording' | 'location';
   isCompetitorQuestion?: boolean;
   totalResponses: number;
   choices?: {
@@ -45,8 +45,8 @@ interface AggregatedResponse {
     percentage: number;
   }[];
   openEndedResponses?: string[];
-   totalSelections?: number; 
-  averageRating?: number; 
+  totalSelections?: number;
+  averageRating?: number;
   ratingValues?: number;
   rankingData?: any[];
   imageUrls?: string[];
@@ -59,6 +59,55 @@ interface DemographicsData {
   ageRanges: { label: string; count: number; percentage: number; }[];
   totalRespondents: number;
 }
+
+router.get("/status", async (req, res) => {
+  try {
+    const { pollId, voter_id } = req.query;
+
+    // Validate inputs
+    if (!pollId || !voter_id) {
+      return res.status(400).json({
+        success: false,
+        message: "pollId and voter_id are required",
+      });
+    }
+
+    // 1. Check if poll exists
+    const pollCheck = await pool.query(
+      "SELECT id FROM polls WHERE id = $1",
+      [pollId]
+    );
+
+    if (pollCheck.rowCount === 0) {
+      return res.status(404).json({
+        success: false,
+        message: "Poll not found",
+      });
+    }
+
+    // 2. Check if user has voted
+    const check = await pool.query(
+      "SELECT * FROM poll_responses WHERE poll_id = $1 AND user_identifier = $2",
+      [pollId, voter_id]
+    );
+    
+    const alreadyVoted = (check.rowCount ?? 0) > 0;
+
+    return res.json({
+      success: true,
+      alreadyVoted,
+    });
+  } catch (error) {
+    console.error("Error checking vote status:", error);
+
+    return res.status(500).json({
+      success: false,
+      message: "Internal server error",
+    });
+  }
+});
+
+
 router.post("/:pollId/vote", async (req, res) => {
   const pollId = parseInt(req.params.pollId, 10);
   const {
@@ -67,7 +116,7 @@ router.post("/:pollId/vote", async (req, res) => {
     respondentName,
     respondentAge,
     respondentGender,
-     region,
+    region,
     county,
     constituency,
     ward,
@@ -144,7 +193,7 @@ router.post("/:pollId/vote", async (req, res) => {
           rating: r.rating,
         });
       }
-      
+
       // Image upload
       if (r.imageUrl?.trim()) {
         imageUploads.push({
@@ -152,7 +201,7 @@ router.post("/:pollId/vote", async (req, res) => {
           url: r.imageUrl.trim(),
         });
       }
-      
+
       // Audio recording
       if (r.audioUrl?.trim()) {
         audioRecordings.push({
@@ -160,7 +209,7 @@ router.post("/:pollId/vote", async (req, res) => {
           url: r.audioUrl.trim(),
         });
       }
-      
+
       // Location
       if (r.latitude !== undefined && r.longitude !== undefined) {
         locationResponses.push({
@@ -188,7 +237,7 @@ router.post("/:pollId/vote", async (req, res) => {
         selectedOptionIds.length > 0 ? selectedOptionIds : null,
         selectedCompetitorIds.length > 0 ? selectedCompetitorIds : null,
         openEndedResponses.length > 0 ? openEndedResponses : null,
-ratingResponses.length > 0 ? ratingResponses : null,
+        ratingResponses.length > 0 ? ratingResponses : null,
         imageUploads.length > 0 ? JSON.stringify(imageUploads) : null,
         audioRecordings.length > 0 ? JSON.stringify(audioRecordings) : null,
         locationResponses.length > 0 ? JSON.stringify(locationResponses) : null,
@@ -330,7 +379,7 @@ router.get("/:pollId/results", async (req, res) => {
          ranking_counts
        FROM poll_responses_admin
        WHERE poll_id = $1`;
-    
+
     const adminParams: any[] = [pollId];
 
     // Apply the same location filters as regular responses
@@ -359,7 +408,7 @@ router.get("/:pollId/results", async (req, res) => {
     const adminBulkData = new Map();
     adminResponsesResult.rows.forEach((row: any) => {
       const questionId = row.question_id;
-      
+
       if (!adminBulkData.has(questionId)) {
         adminBulkData.set(questionId, {
           optionCounts: {},
@@ -369,33 +418,33 @@ router.get("/:pollId/results", async (req, res) => {
           rankingCounts: {},
         });
       }
-      
+
       const existing = adminBulkData.get(questionId);
-      
+
       // Merge option counts
       if (row.option_counts) {
         Object.entries(row.option_counts).forEach(([id, count]) => {
           existing.optionCounts[id] = (existing.optionCounts[id] || 0) + (count as number);
         });
       }
-      
+
       // Merge competitor counts
       if (row.competitor_counts) {
         Object.entries(row.competitor_counts).forEach(([id, count]) => {
           existing.competitorCounts[id] = (existing.competitorCounts[id] || 0) + (count as number);
         });
       }
-      
+
       // Merge open-ended responses
       if (row.open_ended_responses && Array.isArray(row.open_ended_responses)) {
         existing.openEndedResponses.push(...row.open_ended_responses);
       }
-      
+
       // Merge rating values
       if (row.rating_values && Array.isArray(row.rating_values)) {
         existing.ratingValues.push(...row.rating_values);
       }
-      
+
       // Merge ranking counts
       if (row.ranking_counts) {
         Object.entries(row.ranking_counts).forEach(([optionId, ranks]: [string, any]) => {
@@ -415,7 +464,7 @@ router.get("/:pollId/results", async (req, res) => {
          age_range_counts
        FROM poll_demographics_admin
        WHERE poll_id = $1`;
-    
+
     const demographicsParams: any[] = [pollId];
     let demoIndex = 2;
 
@@ -448,7 +497,7 @@ router.get("/:pollId/results", async (req, res) => {
           adminDemographics.genderCounts[gender] = (adminDemographics.genderCounts[gender] || 0) + (count as number);
         });
       }
-      
+
       if (row.age_range_counts) {
         Object.entries(row.age_range_counts).forEach(([range, count]) => {
           adminDemographics.ageRangeCounts[range] = (adminDemographics.ageRangeCounts[range] || 0) + (count as number);
@@ -533,9 +582,9 @@ router.get("/:pollId/results", async (req, res) => {
         // === LOCATION ===
         if (question.type === "location" && Array.isArray(r.location_responses)) {
           const match = r.location_responses.find(
-            (x: any) => x?.questionId === question.id && 
-                        x?.latitude !== undefined && 
-                        x?.longitude !== undefined
+            (x: any) => x?.questionId === question.id &&
+              x?.latitude !== undefined &&
+              x?.longitude !== undefined
           );
           if (match) {
             answered = true;
@@ -625,11 +674,11 @@ router.get("/:pollId/results", async (req, res) => {
           Object.entries(adminData.rankingCounts).forEach(([optionIdStr, ranks]: [string, any]) => {
             const optionId = parseInt(optionIdStr);
             const optionLabel = question.options.find((o: any) => o.id === optionId)?.optionText || "Unknown";
-            
+
             Object.entries(ranks).forEach(([rankKey, count]: [string, any]) => {
               const rankPosition = parseInt(rankKey.replace('rank_', ''));
               if (!rankingsByPosition.has(rankPosition)) rankingsByPosition.set(rankPosition, []);
-              
+
               const existing = rankingsByPosition.get(rankPosition)!.find(r => r.id === optionId);
               if (existing) {
                 existing.count += count;
@@ -674,7 +723,7 @@ router.get("/:pollId/results", async (req, res) => {
       if (optionCounts.size > 0 || competitorCounts.size > 0) {
         const counts = optionCounts.size > 0 ? optionCounts : competitorCounts;
         const total = Array.from(counts.values()).reduce((a, b) => a + b, 0);
-        
+
         result.choices = Array.from(counts.entries()).map(([id, count]) => {
           let label;
           if (question.type === "rating") {
@@ -692,7 +741,7 @@ router.get("/:pollId/results", async (req, res) => {
           } else {
             label = formattedPollData.competitors.find((c: any) => c.id === id)?.name || "Unknown";
           }
-          
+
           return {
             id,
             label,
@@ -772,7 +821,7 @@ router.get("/:pollId/results", async (req, res) => {
     // Calculate total respondents from both sources
     const totalFromRegular = totalUniqueVoters;
     const totalFromAdmin = Object.values(adminDemographics.genderCounts).reduce((sum, count) => sum + count, 0) ||
-                           Object.values(adminDemographics.ageRangeCounts).reduce((sum, count) => sum + count, 0);
+      Object.values(adminDemographics.ageRangeCounts).reduce((sum, count) => sum + count, 0);
     const totalRespondents = totalFromRegular + totalFromAdmin;
 
     const demographics: any = {
@@ -781,7 +830,7 @@ router.get("/:pollId/results", async (req, res) => {
       })),
       ageRanges: Array.from(ageCounts.entries()).map(([label, count]) => ({
         label, count, percentage: totalRespondents > 0 ? Number(((count / totalRespondents) * 100).toFixed(1)) : 0
-      })).sort((a, b) => ["18-24","25-34","35-44","45-54","55-64","65-74","75+"].indexOf(a.label) - ["18-24","25-34","35-44","45-54","55-64","65-74","75+"].indexOf(b.label)),
+      })).sort((a, b) => ["18-24", "25-34", "35-44", "45-54", "55-64", "65-74", "75+"].indexOf(a.label) - ["18-24", "25-34", "35-44", "45-54", "55-64", "65-74", "75+"].indexOf(b.label)),
       totalRespondents,
     };
 
@@ -804,11 +853,11 @@ router.delete("/:id", async (req, res) => {
   }
 
   try {
-   const pollCheck = await pool.query(
+    const pollCheck = await pool.query(
       "SELECT id FROM polls WHERE id = $1",
       [pollId]
     );
-   if (pollCheck.rows.length === 0) {
+    if (pollCheck.rows.length === 0) {
       await pool.query("ROLLBACK");
       return res.status(404).json({ message: "Poll not found." });
     }
@@ -848,7 +897,7 @@ router.delete("/:id", async (req, res) => {
 //   }
 // });
 // router.get("/published", async (req, res) => {
-  
+
 //   try {
 //     const result = await pool.query(
 //       `SELECT 
@@ -979,7 +1028,7 @@ router.get("/:pollId/admin-bulk-responses", async (req, res) => {
          updated_at
        FROM poll_responses_admin
        WHERE poll_id = $1`;
-    
+
     const params: any[] = [pollId];
     let paramIndex = 2;
 
@@ -987,7 +1036,7 @@ router.get("/:pollId/admin-bulk-responses", async (req, res) => {
     if (constituency) {
       query += ` AND constituency = $${paramIndex++}`;
       params.push(constituency);
-      
+
       if (ward) {
         query += ` AND ward = $${paramIndex++}`;
         params.push(ward);
@@ -1094,7 +1143,7 @@ router.get("/:pollId/admin-demographics", async (req, res) => {
          updated_at
        FROM poll_demographics_admin
        WHERE poll_id = $1`;
-    
+
     const params: any[] = [pollId];
     let paramIndex = 2;
 
