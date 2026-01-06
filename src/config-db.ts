@@ -127,7 +127,6 @@ const createTables = async () => {
   constituency TEXT,
   ward TEXT,
     user_identifier TEXT NOT NULL,
-    voter_id TEXT,
     selected_option_ids INT[],
     selected_competitor_ids INT[],
     open_ended_responses jsonb[],
