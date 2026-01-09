@@ -13,6 +13,7 @@ import liveVotes from "./routes/votehistory";
 import opinionsPolls from "./routes/opinion_poll";
 import authRoutes from "./routes/auth";
 import uploadRoutes from "./routes/upload";
+import surveyRequestRoutes from "./routes/survey-requests";
 
 dotenv.config();
 
@@ -37,6 +38,7 @@ app.use("/api/live-votes", liveVotes);
 app.use("/api/Opinions", opinionsPolls);
 app.use("/api/auth", authRoutes);
 app.use("/api/upload", uploadRoutes);
+app.use("/api/survey-requests", surveyRequestRoutes);
 
 pool.query("SELECT NOW()", (err, res) => {
   if (err) {

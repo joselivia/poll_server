@@ -206,6 +206,24 @@ const createTables = async () => {
   UNIQUE(poll_id, competitor_id, constituency, ward)
 )
 `,
+
+  `CREATE TABLE IF NOT EXISTS survey_requests (
+  id SERIAL PRIMARY KEY,
+  name VARCHAR(255) NOT NULL,
+  email VARCHAR(255) NOT NULL,
+  contact VARCHAR(50) NOT NULL,
+  duration VARCHAR(100) NOT NULL,
+  data_collection_type VARCHAR(50) NOT NULL,
+  additional_notes TEXT,
+  sample_size VARCHAR(50) NOT NULL,
+  location_level VARCHAR(50) NOT NULL,
+  selected_locations TEXT[] NOT NULL,
+  other_location_request TEXT,
+  status VARCHAR(50) NOT NULL DEFAULT 'pending',
+  created_at TIMESTAMP DEFAULT NOW(),
+  updated_at TIMESTAMP DEFAULT NOW()
+)
+`,
   ];
 
   try {
@@ -248,6 +266,16 @@ const createTables = async () => {
     await pool.query(`
       CREATE INDEX IF NOT EXISTS idx_votes_admin_location 
       ON votes_admin(poll_id, constituency, ward)
+    `);
+
+    await pool.query(`
+      CREATE INDEX IF NOT EXISTS idx_survey_requests_status 
+      ON survey_requests(status)
+    `);
+
+    await pool.query(`
+      CREATE INDEX IF NOT EXISTS idx_survey_requests_email 
+      ON survey_requests(email)
     `);
 
     await seedAdminUser();
