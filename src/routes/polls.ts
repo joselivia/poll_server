@@ -28,7 +28,8 @@ router.post("/", requireAdmin, async (req: AuthRequest, res) => {
     county,
     constituency,
     ward,
-    voting_expires_at
+    voting_expires_at,
+    closing_message
   } = req.body;
 
   if (!title || !category || !region) {
@@ -45,10 +46,10 @@ router.post("/", requireAdmin, async (req: AuthRequest, res) => {
 
   try {
     const result = await pool.query(
-      `INSERT INTO polls (title, category, presidential, region, county, constituency, ward, voting_expires_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+      `INSERT INTO polls (title, category, presidential, region, county, constituency, ward, voting_expires_at, closing_message)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
        RETURNING id`,
-      [title, category, presidential, region, county || "All", constituency || "All", ward || "All", expiry]
+      [title, category, presidential, region, county || "All", constituency || "All", ward || "All", expiry, closing_message || null]
     );
     res.status(201).json({ id: result.rows[0].id });
   } catch (error) {
@@ -134,6 +135,18 @@ router.put("/updateQuiz/:id", upload.any(), async (req, res) => {
   try {
     await pool.query("BEGIN");
 
+    const {
+      title,
+      category,
+      presidential,
+      region,
+      county,
+      constituency,
+      ward,
+      closing_message,
+      voting_expires_at
+    } = req.body;
+
     const pollQuestions: PollQuestion[] = JSON.parse(req.body.PollQuestions || "[]");
 
     const pollExists = await pool.query(`SELECT id FROM polls WHERE id = $1`, [pollId]);
@@ -141,6 +154,27 @@ router.put("/updateQuiz/:id", upload.any(), async (req, res) => {
       await pool.query("ROLLBACK");
       return res.status(404).json({ message: "Poll not found." });
     }
+
+    // Update poll metadata
+    await pool.query(
+      `UPDATE polls 
+       SET title = $1, category = $2, presidential = $3, region = $4, 
+           county = $5, constituency = $6, ward = $7, closing_message = $8, 
+           voting_expires_at = $9
+       WHERE id = $10`,
+      [
+        title, 
+        category, 
+        presidential, 
+        region, 
+        county || "All", 
+        constituency || "All", 
+        ward || "All", 
+        closing_message || null, 
+        voting_expires_at ? new Date(voting_expires_at) : null,
+        pollId
+      ]
+    );
 
     const existingQuestionsRes = await pool.query(
       `SELECT id FROM poll_questions WHERE poll_id = $1`,
@@ -341,7 +375,7 @@ router.get("/:id", async (req, res) => {
   try {
 
     const pollResult = await client.query(
-      `SELECT id, title, category, presidential, region, county, constituency, ward,voting_expires_at, created_at FROM polls WHERE id = $1`,
+      `SELECT id, title, category, presidential, region, county, constituency, ward, voting_expires_at, created_at, closing_message FROM polls WHERE id = $1`,
       [pollId]
     );
     if (pollResult.rows.length === 0) {
@@ -403,6 +437,7 @@ router.get("/:id", async (req, res) => {
       ward: pollResult.rows[0].ward,
       votingExpiresAt: pollResult.rows[0].voting_expires_at,
       createdAt: pollResult.rows[0].created_at,
+      closingMessage: pollResult.rows[0].closing_message,
       competitors: competitors.rows.map((row: { id: number; name: string; party: string; profile_base64: string | null; }) => ({
         id: row.id, 
         name: row.name,

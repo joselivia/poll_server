@@ -61,7 +61,8 @@ const createTables = async () => {
   voting_expires_at TIMESTAMP,
   allow_multiple_votes BOOLEAN DEFAULT false,
   published BOOLEAN DEFAULT false, 
-  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  closing_message TEXT
 );`,
     `CREATE TABLE IF NOT EXISTS poll_competitors (
       id SERIAL PRIMARY KEY,
