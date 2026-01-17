@@ -19,11 +19,33 @@ dotenv.config();
 
 const app = express();
 app.set('trust proxy', 1);
+
+// CORS configuration - only allow requests from politrack.africa domain
+const corsOptions = {
+  origin: (origin: string | undefined, callback: (err: Error | null, allow?: boolean) => void) => {
+    // Allow requests from politrack.africa and its subdomains
+    const allowedOrigins = [
+      'https://politrack.africa',
+      'https://www.politrack.africa',
+      'http://politrack.africa',
+      'http://www.politrack.africa'
+    ];
+    
+    // Allow requests with no origin (like mobile apps or curl requests) - remove if not needed
+    if (!origin || allowedOrigins.includes(origin)) {
+      callback(null, true);
+    } else {
+      callback(new Error('Not allowed by CORS'));
+    }
+  },
+  credentials: true,
+  optionsSuccessStatus: 200
+};
+
+app.use(cors(corsOptions));
 app.use(express.json({ limit: "50mb" }));
 app.use(express.urlencoded({ limit: "50mb", extended: true }));
 const port = process.env.PORT || 8082;
-app.use(cors());
-app.use(express.json());
 
 // Serve uploaded files statically
 app.use("/api/uploads", express.static(path.join(__dirname, "../uploads")));
