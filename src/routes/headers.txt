@@ -1,0 +1,46 @@
+{
+  host: 'api.politrack.africa',
+  'x-real-ip': '172.69.46.158',
+  'x-forwarded-for': '105.161.210.150, 172.69.46.158',
+  'x-forwarded-proto': 'http',
+  connection: 'close',
+  'content-length': '172',
+  priority: 'u=1, i',
+  'sec-ch-ua-platform': '"macOS"',
+  'user-agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36',
+  accept: 'application/json, text/plain, */*',
+  'sec-ch-ua': '"Google Chrome";v="143", "Chromium";v="143", "Not A(Brand";v="24"',
+  'content-type': 'application/json',
+  'sec-ch-ua-mobile': '?0',
+  origin: 'https://www.politrack.africa',
+  'sec-fetch-site': 'same-site',
+  'sec-fetch-mode': 'cors',
+  'sec-fetch-dest': 'empty',
+  referer: 'https://www.politrack.africa/',
+  'accept-encoding': 'gzip, br',
+  'accept-language': 'en-GB,en-US;q=0.9,en;q=0.8',
+  'cf-ray': '9bf4bc95fdf0793a-DAR',
+  'cdn-loop': 'cloudflare; loops=1',
+  'cf-connecting-ip': '105.161.210.150',
+  'cf-ipcountry': 'KE',
+  'cf-visitor': '{"scheme":"https"}'
+}
+
+{
+  host: 'api.politrack.africa',
+  'x-real-ip': '172.69.112.192',
+  'x-forwarded-for': '2c0f:5fc0:105:9300:b15a:c42d:3321:9440, 172.69.112.192',
+  'x-forwarded-proto': 'http',
+  connection: 'close',
+  'content-length': '262',
+  'user-agent': 'curl/8.5.0',
+  'accept-encoding': 'gzip, br',
+  'content-type': 'application/json',
+  accept: '*/*',
+  'cf-ray': '9bf4bbb20a56b27b-DUR',
+  'cdn-loop': 'cloudflare; loops=1',
+  'cf-connecting-ip': '2c0f:5fc0:105:9300:b15a:c42d:3321:9440',
+  'cf-ipcountry': 'KE',
+  'cf-visitor': '{"scheme":"https"}'
+}
+  

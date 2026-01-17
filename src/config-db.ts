@@ -82,6 +82,7 @@ const createTables = async () => {
   county TEXT,
   constituency TEXT,
   ward TEXT,
+  ip_address VARCHAR(45),
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 `,
@@ -277,6 +278,11 @@ const createTables = async () => {
     await pool.query(`
       CREATE INDEX IF NOT EXISTS idx_survey_requests_email 
       ON survey_requests(email)
+    `);
+
+    await pool.query(`
+      CREATE INDEX IF NOT EXISTS idx_votes_ip_address 
+      ON votes(poll_id, ip_address)
     `);
 
     await seedAdminUser();

@@ -99,6 +99,16 @@ router.get("/:id/questions", async (req, res) => {
     return res.status(500).json({ message: "Internal server error." });
   }
 });
+
+const getRealIP = (req: express.Request): string => {
+  return (
+    req.headers['cf-connecting-ip'] as string ||
+    req.headers['x-forwarded-for']?.toString().split(',')[0] ||
+    req.socket.remoteAddress ||
+    'unknown'
+  );
+};
+
 router.post("/", voteLimiter, async (req, res) => {
   const {
     id: pollId,
@@ -112,11 +122,16 @@ router.post("/", voteLimiter, async (req, res) => {
     ward,
   } = req.body;
 
+  
+
   if (!pollId || !competitorId || !voter_id) {
     return res.status(400).json({
       message: "Missing pollId, competitorId, or voter_id.",
     });
   }
+  const voterIP = getRealIP(req);
+  console.log("Voter IP Address:", voterIP);
+
 
   try {
     await pool.query("BEGIN");
@@ -143,6 +158,19 @@ router.post("/", voteLimiter, async (req, res) => {
       }
     }
 
+    // 2.5️⃣ Check if IP address has already voted in this poll
+    const ipCheck = await pool.query(
+      `SELECT 1 FROM votes WHERE poll_id = $1 AND ip_address = $2`,
+      [pollId, voterIP]
+    );
+
+    if ((ipCheck.rowCount ?? 0) > 0) {
+      await pool.query("ROLLBACK");
+      return res
+        .status(403)
+        .json({ message: "A vote has already been recorded from your IP address." });
+    }
+
     // 3️⃣ Ensure competitor belongs to poll
     const competitorCheck = await pool.query(
       `SELECT id FROM poll_competitors WHERE id = $1 AND poll_id = $2`,
@@ -160,10 +188,10 @@ router.post("/", voteLimiter, async (req, res) => {
     try {
       const insert = await pool.query(
         `INSERT INTO votes (
-          poll_id, competitor_id, voter_id, name, gender, region, county, constituency, ward
-        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+          poll_id, competitor_id, voter_id, name, gender, region, county, constituency, ward, ip_address
+        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
         RETURNING id`,
-        [pollId, competitorId, voter_id, name, gender, region, county, constituency, ward]
+        [pollId, competitorId, voter_id, name, gender, region, county, constituency, ward, voterIP]
       );
     } catch (err: any) {
       if (err.code === "23505") {
