@@ -31,9 +31,10 @@ const corsOptions = {
       'http://www.politrack.africa'
     ];
     
-    // SECURITY: Reject requests without origin header (bots, curl, etc.)
+    // SECURITY: Log a warning for requests without origin header (bots, curl, etc.)
     if (!origin) {
-      callback(new Error('Origin header required'));
+      console.warn('⚠️ Warning: Origin header is missing.');
+      callback(null, false); // Reject the request without throwing an error
       return;
     }
     

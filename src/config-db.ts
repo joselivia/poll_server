@@ -82,7 +82,6 @@ const createTables = async () => {
   county TEXT,
   constituency TEXT,
   ward TEXT,
-  ip_address VARCHAR(45),
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 `,
